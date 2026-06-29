@@ -239,6 +239,7 @@ function renderExampleZone(page) {
               <button data-action="prev-zdict">‹</button>
               <button data-action="next-zdict">›</button>
             ` : ""}
+            <button data-action="copy-prompt" title="生成并复制图片提示词">提示词</button>
           </div>
           <div class="example-content">
             <div class="text-display example-display zdict-example"><span class="zdict-tag">字库</span>${renderHighlightedText(meanings[idx], token.text)}</div>
@@ -262,6 +263,7 @@ function renderExampleZone(page) {
           <button data-action="next-example" ${examples.length < 2 ? "disabled" : ""}>›</button>
           <button data-action="hide-example" title="只在当前位置隐藏">藏</button>
           <button data-action="delete-example" title="从本讲义共享素材中删除">删</button>
+          <button data-action="copy-prompt" title="生成并复制图片提示词">提示词</button>
         ` : ""}
       </div>
       <div class="example-content">

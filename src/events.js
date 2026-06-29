@@ -398,6 +398,12 @@ function handleAction(target, event) {
     return render();
   }
 
+  if (action === "copy-prompt") {
+    const text = buildImagePrompt();
+    if (text) copyPrompt(text, target);
+    return;
+  }
+
   if (action === "hide-example") {
     hideCurrentExample();
     return;
@@ -931,6 +937,65 @@ export function movePageSelection(step) {
   clearTransient();
   saveState();
   render();
+}
+
+// Build an image-generation prompt for the selected character from either the
+// current user example or, in dictionary-fallback mode, the current zdict
+// meaning (with the "～" placeholder replaced by the character itself).
+function buildImagePrompt() {
+  const { deck, token, entry } = activeContext();
+  if (!token) return "";
+
+  let content = "";
+  const usingZdict = entry.examples.length === 0 && !state.ui.pendingExample && deck.settings.showZdictExamples;
+  if (usingZdict) {
+    const meanings = lookupZdictMeanings(token.text, token.pinyin);
+    if (!meanings.length) return "";
+    const idx = Math.min(Math.max(state.ui.zdictIndex || 0, 0), meanings.length - 1);
+    content = meanings[idx].replaceAll("～", token.text).replaceAll("~", token.text);
+  } else {
+    const examples = visibleExamples(entry, token);
+    if (!examples.length) return "";
+    const idx = Math.min(Math.max(token.exampleIndex || 0, 0), examples.length - 1);
+    content = examples[idx]?.text || "";
+  }
+
+  content = content.trim().replace(/[。．.\s]+$/u, "");
+  if (!content) return "";
+  return `请为小学语文教材生成一张配图，帮助学生理解汉字“${token.text}”。画面内容：${content}。要求：儿童绘本插画风格，色彩明亮、构图简洁，画面中不要出现任何文字。`;
+}
+
+function flashButton(button, label) {
+  if (!button) return;
+  const original = button.textContent;
+  button.textContent = label;
+  window.setTimeout(() => { button.textContent = original; }, 1200);
+}
+
+function copyPrompt(text, button) {
+  const done = () => flashButton(button, "已复制");
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+function fallbackCopy(text, done) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  try {
+    document.execCommand("copy");
+    done();
+  } catch {
+    window.prompt("复制以下提示词：", text);
+  } finally {
+    area.remove();
+  }
 }
 
 function speakText(text) {
