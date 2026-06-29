@@ -178,6 +178,12 @@ input:focus {
   gap: 4px;
 }
 
+.deck-popover-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .deck-list,
 .page-list {
   display: grid;
@@ -247,6 +253,27 @@ input:focus {
 .page-item {
   min-height: 96px;
   padding: 9px;
+  position: relative;
+}
+
+/* Drop position indicator while dragging to reorder pages (PowerPoint-style). */
+.page-item.drop-before::before,
+.page-item.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.page-item.drop-before::before {
+  top: -6px;
+}
+
+.page-item.drop-after::after {
+  bottom: -6px;
 }
 
 .page-number {
@@ -425,6 +452,10 @@ input:focus {
 
 .plain-char {
   white-space: pre-wrap;
+  /* Tokens are bottom-aligned to the line box (pinyin stacks above the hanzi),
+     so punctuation must bottom-align too, otherwise it floats up to the
+     alphabetic baseline and reads as "too high" next to the characters. */
+  vertical-align: bottom;
 }
 
 .main-editor {
@@ -506,6 +537,25 @@ input:focus {
 
 .inline-highlight {
   color: var(--accent);
+}
+
+.zdict-example {
+  font-size: 22px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-align: left;
+}
+
+.zdict-tag {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(117, 111, 104, 0.14);
+  color: var(--muted);
+  font-family: var(--ui-font);
+  font-size: 13px;
+  vertical-align: middle;
 }
 
 .zone-controls {

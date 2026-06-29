@@ -2,8 +2,9 @@
   "name": "yuwen",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "A clean Chinese handout editor for early learners.",
   "scripts": {
-    "check": "node --check app.js && node --check vendor/data-chars-local.js"
+    "check": "for f in src/*.js; do node --check \"$f\" || exit 1; done && node --check vendor/data-chars-local.js"
   }
 }
