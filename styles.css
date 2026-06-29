@@ -87,8 +87,10 @@ input:focus {
 .topbar {
   grid-column: 1 / -1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+  row-gap: 8px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
   background: rgba(251, 250, 246, 0.94);
@@ -115,8 +117,10 @@ input:focus {
 
 .toolbar-group {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  row-gap: 6px;
   padding-left: 10px;
   border-left: 1px solid var(--line);
 }

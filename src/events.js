@@ -34,7 +34,6 @@ import { saveState, touchDeck, exportDeck, importData } from "./storage.js";
 
 export function installEvents() {
   app.addEventListener("click", onAppClick);
-  app.addEventListener("dblclick", onAppDblClick);
   app.addEventListener("contextmenu", onAppContextMenu);
   app.addEventListener("pointerdown", onAppPointerDown);
   app.addEventListener("focusout", onAppFocusOut);
@@ -122,19 +121,6 @@ function onAppClick(event) {
   if (el.matches(".workspace")) {
     clearSelection();
   }
-}
-
-// Double-clicking the main text zone enters edit mode (replaces the old
-// "编辑正文" toolbar button). Clicking empty space still commits and exits.
-function onAppDblClick(event) {
-  if (state.ui.editingMain) return;
-  const el = eventEl(event);
-  if (!el) return;
-  if (!el.closest('[data-blank="main"]') || el.closest("textarea")) return;
-  commitActiveField();
-  state.ui.editingMain = true;
-  closeFloaters();
-  render();
 }
 
 function onAppContextMenu(event) {
@@ -330,6 +316,13 @@ function handleAction(target, event) {
 
   if (action === "toggle-chrome") {
     state.ui.chromeCollapsed = !state.ui.chromeCollapsed;
+    closeFloaters();
+    return render();
+  }
+
+  if (action === "edit-main") {
+    commitActiveField();
+    state.ui.editingMain = !state.ui.editingMain;
     closeFloaters();
     return render();
   }

@@ -95,6 +95,7 @@ function renderFullShell(deck, page, flags) {
         <button data-action="scale-down">A-</button>
         <button data-action="scale-reset">A0</button>
         <button data-action="scale-up">A+</button>
+        <button data-action="edit-main">${state.ui.editingMain ? "完成正文" : "编辑正文"}</button>
         <label class="toggle"><input type="checkbox" data-action="toggle-text-only" ${page.textOnly ? "checked" : ""}> 全文页</label>
         <button data-action="speak" disabled title="朗读暂不可用">朗读</button>
         <button data-action="toggle-chrome">最大化</button>
