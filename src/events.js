@@ -28,7 +28,7 @@ import {
   id
 } from "./core.js";
 import { render, app } from "./render.js";
-import { saveState, touchDeck, exportData, importData } from "./storage.js";
+import { saveState, touchDeck, exportDeck, importData } from "./storage.js";
 
 // --- Delegated event installation -----------------------------------------
 
@@ -282,7 +282,7 @@ function handleAction(target, event) {
   if (action === "new-page") return newPage();
   if (action === "copy-page") return copyPage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "delete-page") return deletePage(target.dataset.pageId || state.ui.pageContext?.pageId);
-  if (action === "export-deck") return exportDecks();
+  if (action === "export-deck") return exportSelectedDeck();
   if (action === "import-deck") return importDecksFlow();
 
   if (action === "toggle-deck-picker") {
@@ -949,10 +949,10 @@ function speakText(text) {
 
 // --- Import / export -------------------------------------------------------
 
-function exportDecks() {
-  state.ui.deckPickerOpen = false;
-  closeFloaters();
-  exportData();
+function exportSelectedDeck() {
+  const deck = state.decks.find((item) => item.id === state.ui.deckContext?.deckId) || getActiveDeck();
+  state.ui.deckContext = null;
+  if (deck) exportDeck(deck);
   render();
 }
 

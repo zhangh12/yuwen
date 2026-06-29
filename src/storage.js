@@ -11,7 +11,9 @@ import {
   getActiveDeck,
   createDeck,
   tokenizePage,
-  ensureDeckModel
+  ensureDeckModel,
+  deepClone,
+  id
 } from "./core.js";
 
 const DB_NAME = "yuwen";
@@ -159,17 +161,48 @@ function sanitizeImages(payload) {
   return payload;
 }
 
-export function exportData() {
-  const json = JSON.stringify(buildPayload(), null, 2);
+// Export a single deck to its own JSON file (same payload shape as a full
+// backup, but containing just this deck).
+export function exportDeck(deck) {
+  if (!deck) return;
+  const payload = {
+    decks: [deck],
+    activeDeckId: deck.id,
+    activePageId: deck.pages?.[0]?.id || ""
+  };
+  const json = JSON.stringify(payload, null, 2);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
+  const safeTitle = String(deck.title || "讲义").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 40);
   link.href = url;
-  link.download = `yuwen-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `yuwen-${safeTitle}-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+// Append imported decks as new decks (with fresh ids) so importing never
+// overwrites the existing library. Returns the first imported deck.
+function appendImportedDecks(stored) {
+  const imported = stored.decks.map((source) => {
+    const deck = deepClone(source);
+    deck.id = id("deck");
+    deck.updatedAt = Date.now();
+    deck.pages?.forEach((page) => {
+      page.id = id("page");
+      page.tokens?.forEach((token) => { token.id = id("tok"); });
+    });
+    return deck;
+  });
+  imported.forEach((deck) => {
+    deck.pages.forEach(tokenizePage);
+    ensureDeckModel(deck);
+    state.decks.push(deck);
+  });
+  state.activeDeckId = imported[0].id;
+  state.activePageId = imported[0].pages[0].id;
 }
 
 export async function importData(file) {
@@ -183,6 +216,6 @@ export async function importData(file) {
   if (!isValidPayload(parsed)) {
     throw new Error("文件结构不符合 yuwen 讲义格式。");
   }
-  applyLoadedState(sanitizeImages(parsed));
+  appendImportedDecks(sanitizeImages(parsed));
   saveState();
 }

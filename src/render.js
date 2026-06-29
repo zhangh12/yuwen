@@ -144,9 +144,8 @@ function renderDeckPicker() {
       <div class="deck-popover-head">
         <span>讲义</span>
         <span class="deck-popover-actions">
-          <button title="导入讲义 JSON" data-action="import-deck">导入</button>
-          <button title="导出全部讲义为 JSON" data-action="export-deck">导出</button>
-          <button title="新建讲义" data-action="new-deck">+</button>
+          <button title="从 JSON 文件导入讲义" data-action="import-deck">导入</button>
+          <button title="新建讲义" data-action="new-deck">新增</button>
         </span>
       </div>
       <div class="deck-list">
@@ -341,6 +340,7 @@ function renderDeckContextMenu() {
     <div class="context-menu" style="left:${state.ui.deckContext.x}px;top:${state.ui.deckContext.y}px">
       <button class="menu-item" data-action="rename-deck">重命名</button>
       <button class="menu-item" data-action="copy-deck">复制</button>
+      <button class="menu-item" data-action="export-deck">导出</button>
       <button class="menu-item" data-action="delete-deck">删除</button>
     </div>
   `;
