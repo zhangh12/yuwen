@@ -45,6 +45,12 @@ export function render() {
 
   const longText = [...page.mainText].length > 18 || page.mainText.includes("\n");
 
+  // The full innerHTML rebuild destroys the scrollable panels, so capture the
+  // page-list scroll position and restore it afterwards. Otherwise any
+  // re-render (e.g. opening a page's context menu) jumps the list to the top.
+  const prevPanelScroll = app.querySelector(".pages-panel")?.scrollTop ?? 0;
+  const prevListScroll = app.querySelector(".page-list")?.scrollLeft ?? 0;
+
   app.innerHTML = `
     <div class="app-shell ${state.ui.chromeCollapsed ? "is-collapsed" : ""}" style="--annotation-color:${colorValue(state.ui.annotationColor || "red")}">
       ${state.ui.chromeCollapsed ? renderCollapsed(page) : renderFullShell(deck, page, { longText })}
@@ -55,6 +61,11 @@ export function render() {
       ${renderPinyinMenu()}
     </div>
   `;
+
+  const panel = app.querySelector(".pages-panel");
+  if (panel) panel.scrollTop = prevPanelScroll;
+  const list = app.querySelector(".page-list");
+  if (list) list.scrollLeft = prevListScroll;
 
   focusAutofocusField();
 }
