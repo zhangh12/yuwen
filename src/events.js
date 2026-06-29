@@ -346,12 +346,10 @@ function handleAction(target, event) {
 
   if (action === "speak-token") {
     const token = getToken(page, state.ui.menu?.tokenId || state.ui.activeTokenId);
-    if (token) {
-      // For polyphonic characters, speak the marked reading (pinyin) so the
-      // chosen pronunciation is honoured; single-reading chars read the glyph.
-      const polyphonic = (token.pinyinCandidates?.length || 0) > 1;
-      speakText(polyphonic && token.pinyin ? token.pinyin : token.text);
-    }
+    // Speak the character itself with a Chinese voice. Forcing a specific
+    // polyphonic reading is not reliably possible via the Web Speech API, so
+    // polyphonic chars use the engine's default reading.
+    if (token) speakText(token.text);
     state.ui.menu = null;
     return render();
   }
@@ -940,6 +938,11 @@ function speakText(text) {
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "zh-CN";
+  // Pin an actual Chinese voice when one exists; otherwise the engine may read
+  // the character with the default (often English) voice and mangle it.
+  const voices = window.speechSynthesis.getVoices?.() || [];
+  const zhVoice = voices.find((voice) => /^zh\b/i.test(voice.lang) || /zh[-_]/i.test(voice.lang));
+  if (zhVoice) utterance.voice = zhVoice;
   utterance.rate = 0.82;
   window.speechSynthesis.speak(utterance);
 }
