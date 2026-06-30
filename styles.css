@@ -195,6 +195,11 @@ input:focus {
   padding: 10px;
 }
 
+/* 底部留白：滚到底时最后一个页面不贴下边缘，右键菜单不会被浏览器下边框裁掉。 */
+.page-list {
+  padding-bottom: 76px;
+}
+
 .deck-popover {
   position: fixed;
   z-index: 25;

@@ -10,6 +10,7 @@ import {
   state,
   getActiveDeck,
   createDeck,
+  createPage,
   tokenizePage,
   ensureDeckModel,
   deepClone,
@@ -203,6 +204,35 @@ function appendImportedDecks(stored) {
   });
   state.activeDeckId = imported[0].id;
   state.activePageId = imported[0].pages[0].id;
+}
+
+// Import a "yuwen-pages" file: append each page to the CURRENT deck. yuwen
+// re-derives pinyin via createPage. Returns the number of pages added.
+export async function importPages(file) {
+  const text = await file.text();
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("文件不是有效的 JSON。");
+  }
+  if (!parsed || parsed.format !== "yuwen-pages" || !Array.isArray(parsed.pages)
+    || !parsed.pages.every((page) => page && typeof page.text === "string")) {
+    throw new Error("文件格式不是 yuwen-pages。");
+  }
+  const deck = getActiveDeck();
+  const created = parsed.pages.map((page) => {
+    const body = String(page.text);
+    const title = (typeof page.title === "string" && page.title.trim())
+      || body.trim().replace(/\s+/g, " ").slice(0, 12)
+      || "新页面";
+    return createPage(title, body);
+  });
+  if (!created.length) throw new Error("文件中没有页面。");
+  deck.pages.push(...created);
+  state.activePageId = created[0].id;
+  saveState();
+  return created.length;
 }
 
 export async function importData(file) {

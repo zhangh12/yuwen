@@ -128,6 +128,7 @@ function renderFullShell(deck, page, flags) {
       <div class="panel-head">
         <h2>页面</h2>
         <div class="compact-actions">
+          <button title="从 yuwen-pages 文件导入页面" data-action="import-pages">导入</button>
           <button title="添加页面" data-action="new-page">+</button>
         </div>
       </div>

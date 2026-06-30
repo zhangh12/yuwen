@@ -28,7 +28,7 @@ import {
   id
 } from "./core.js";
 import { render, app } from "./render.js";
-import { saveState, touchDeck, exportDeck, importData } from "./storage.js";
+import { saveState, touchDeck, exportDeck, importData, importPages } from "./storage.js";
 import { radicalsInDecks, collectMatches, groupByRadical, buildDocx, buildPrintHtml } from "./charquery.js";
 
 // --- Delegated event installation -----------------------------------------
@@ -277,6 +277,7 @@ function handleAction(target, event) {
   if (action === "delete-page") return deletePage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "export-deck") return exportSelectedDeck();
   if (action === "import-deck") return importDecksFlow();
+  if (action === "import-pages") return importPagesFlow();
 
   if (action === "open-charquery") return openCharQuery();
   if (action === "charquery-close") { state.ui.query = null; return render(); }
@@ -1114,6 +1115,25 @@ function printCharQuery() {
   win.document.close();
   win.focus();
   win.print();
+}
+
+function importPagesFlow() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/json,.json";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const count = await importPages(file);
+      clearTransient();
+      render();
+      window.alert(`已导入 ${count} 个页面到当前讲义。`);
+    } catch (error) {
+      window.alert(`导入页面失败：${error.message}`);
+    }
+  }, { once: true });
+  input.click();
 }
 
 function importDecksFlow() {
