@@ -29,7 +29,8 @@ import {
 } from "./core.js";
 import { render, app } from "./render.js";
 import { saveState, touchDeck, exportDeck, importData, importPages } from "./storage.js";
-import { radicalsInDecks, collectMatches, groupByRadical, buildDocx, buildPrintHtml } from "./charquery.js";
+import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, buildDocx, buildPrintHtml } from "./charquery.js";
+import { fetchStrokes, buildZitieHtml } from "./zitie.js";
 
 // --- Delegated event installation -----------------------------------------
 
@@ -287,10 +288,15 @@ function handleAction(target, event) {
   if (action === "charquery-back") { state.ui.query.step = Math.max(1, state.ui.query.step - 1); return render(); }
   if (action === "charquery-radical") { toggleQueryRadical(target.dataset.radical); return render(); }
   if (action === "charquery-radicals-all") { toggleAllQueryRadicals(); return render(); }
-  if (action === "charquery-generate") { state.ui.query.step = 3; return render(); }
+  if (action === "charquery-to-chars") { initQueryChars(); state.ui.query.step = 3; return render(); }
+  if (action === "charquery-char") { toggleQueryChar(target.dataset.char); return render(); }
+  if (action === "charquery-chars-all") { toggleAllQueryChars(); return render(); }
+  if (action === "charquery-char-sort") { state.ui.query.charSort = target.checked ? "radical" : "freq"; return render(); }
+  if (action === "charquery-to-preview") { state.ui.query.step = 4; return render(); }
   if (action === "charquery-include-pinyin") { state.ui.query.includePinyin = target.checked; return render(); }
   if (action === "charquery-export-word") return exportCharQueryWord();
   if (action === "charquery-print") return printCharQuery();
+  if (action === "charquery-print-zitie" || action === "charquery-export-zitie") return printZitie();
 
   if (action === "toggle-deck-picker") {
     state.ui.deckPickerOpen = !state.ui.deckPickerOpen;
@@ -1044,6 +1050,8 @@ function openCharQuery() {
     deckIds: state.decks.map((deck) => deck.id),
     lastDeckIndex: -1,
     radicals: [],
+    chars: [],
+    charSort: "freq",
     includePinyin: true
   };
   closeFloaters();
@@ -1084,9 +1092,76 @@ function toggleAllQueryRadicals() {
   query.radicals = allSelected ? [] : present;
 }
 
+// Entering the character step: candidate = chars matching the chosen radicals,
+// default ALL selected. The user then toggles individual chars off/on.
+function initQueryChars() {
+  const query = state.ui.query;
+  query.chars = charsInDecks(query.deckIds, query.radicals).map((item) => item.char);
+}
+
+function toggleQueryChar(char) {
+  const query = state.ui.query;
+  query.chars = query.chars.includes(char)
+    ? query.chars.filter((item) => item !== char)
+    : [...query.chars, char];
+}
+
+function toggleAllQueryChars() {
+  const query = state.ui.query;
+  const all = charsInDecks(query.deckIds, query.radicals).map((item) => item.char);
+  const allSelected = all.length > 0 && all.every((char) => query.chars.includes(char));
+  query.chars = allSelected ? [] : all;
+}
+
 function currentQueryGroups() {
   const query = state.ui.query;
-  return groupByRadical(collectMatches(query.deckIds, query.radicals));
+  return groupByRadical(collectMatches(query.deckIds, new Set(query.chars || [])));
+}
+
+// 字帖用的唯一字顺序 = 从上到下读 Word 文档时各字首次出现的顺序：
+// 把 Word 用的同一套分组（currentQueryGroups）按顺序铺平、去重取字。
+// Word 的生成逻辑不变，字帖只是“跟着 Word 走”。
+function orderedSelectedChars() {
+  const seen = new Set();
+  const ordered = [];
+  for (const group of currentQueryGroups()) {
+    for (const item of group.items) {
+      if (!seen.has(item.char)) { seen.add(item.char); ordered.push(item.char); }
+    }
+  }
+  return ordered;
+}
+
+// 字帖：取去重后的唯一字，按需从 CDN 取笔画，渲染练字帖，交浏览器打印 / 存 PDF。
+async function printZitie() {
+  const chars = orderedSelectedChars();
+  if (!chars.length) return;
+  // 必须在点击手势内同步打开窗口，否则取完 CDN 笔画后再 open 会被弹窗拦截器拦掉。
+  const win = window.open("", "_blank");
+  if (!win) {
+    window.alert("浏览器拦截了新窗口，请允许本站弹出窗口后重试。");
+    return;
+  }
+  win.document.write('<!doctype html><meta charset="utf-8"><title>字帖</title><body style="font:16px sans-serif;color:#666;padding:28px">正在生成字帖，请稍候…</body>');
+  win.document.close();
+  try {
+    const strokesList = await Promise.all(chars.map((char) => fetchStrokes(char)));
+    const charStrokes = chars.map((char, i) => ({ char, strokes: strokesList[i] }));
+    const missing = charStrokes.filter((item) => !item.strokes).map((item) => item.char);
+    win.document.open();
+    win.document.write(buildZitieHtml(charStrokes));
+    win.document.close();
+    win.focus();
+    if (missing.length) {
+      window.alert(`有 ${missing.length} 个字未找到笔画数据（已留空白格）：${missing.join(" ")}`);
+    }
+    win.setTimeout(() => win.print(), 350);
+  } catch (error) {
+    console.error(error);
+    win.document.open();
+    win.document.write(`<body style="font:16px sans-serif;color:#c00;padding:28px">生成字帖失败：${error && error.message}</body>`);
+    win.document.close();
+  }
 }
 
 function exportCharQueryWord() {

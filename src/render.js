@@ -16,7 +16,7 @@ import {
   imageContext,
   lookupZdictMeanings
 } from "./core.js";
-import { radicalsInDecks, collectMatches, groupByRadical, mergeBySentence, headerLine } from "./charquery.js";
+import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, mergeBySentence, headerLine } from "./charquery.js";
 
 export const app = document.querySelector("#app");
 
@@ -385,7 +385,7 @@ function renderCharQuery() {
   const query = state.ui.query;
   if (!query?.open) return "";
 
-  const stepLabel = { 1: "①选择讲义", 2: "②选择部首", 3: "③预览导出" }[query.step];
+  const stepLabel = { 1: "①选择讲义", 2: "②选择部首", 3: "③选择单字", 4: "④预览导出" }[query.step];
   return `
     <div class="cq-overlay">
       <div class="cq-dialog">
@@ -440,17 +440,41 @@ function renderCharQueryStep(query) {
       </div>
       <div class="cq-foot">
         <button data-action="charquery-back">← 上一步</button>
-        <button class="cq-primary" data-action="charquery-generate" ${chosen.length ? "" : "disabled"}>生成预览 →</button>
+        <button class="cq-primary" data-action="charquery-to-chars" ${chosen.length ? "" : "disabled"}>下一步 →</button>
       </div>
     `;
   }
 
-  const groups = groupByRadical(collectMatches(query.deckIds, query.radicals));
+  if (query.step === 3) {
+    const candidates = charsInDecks(query.deckIds, query.radicals, query.charSort);
+    const selected = new Set(query.chars || []);
+    const allSelected = candidates.length > 0 && candidates.every((item) => selected.has(item.char));
+    const chosen = candidates.filter((item) => selected.has(item.char)).length;
+    return `
+      <div class="cq-toolbar">
+        <button data-action="charquery-chars-all">${allSelected ? "全不选" : "全选"}</button>
+        <label class="toggle"><input type="checkbox" data-action="charquery-char-sort" ${query.charSort === "radical" ? "checked" : ""}> 按部首排序</label>
+        <span class="cq-dim">默认全选，点字可移除/恢复 · 已选 ${chosen} / ${candidates.length} 字</span>
+      </div>
+      <div class="cq-chips">
+        ${candidates.length ? candidates.map((item) => `
+          <button class="cq-chip ${selected.has(item.char) ? "is-sel" : ""}" data-action="charquery-char" data-char="${escapeHtml(item.char)}">${escapeHtml(item.char)} <span class="cq-dim">${item.count}</span></button>
+        `).join("") : `<span class="cq-dim">没有满足条件的字。</span>`}
+      </div>
+      <div class="cq-foot">
+        <button data-action="charquery-back">← 上一步</button>
+        <button class="cq-primary" data-action="charquery-to-preview" ${chosen ? "" : "disabled"}>预览导出 →</button>
+      </div>
+    `;
+  }
+
+  const groups = groupByRadical(collectMatches(query.deckIds, new Set(query.chars || [])));
   const total = groups.reduce((sum, group) => sum + group.items.length, 0);
+  const uniqueCount = (query.chars || []).length;
   return `
     <div class="cq-toolbar">
       <label class="toggle"><input type="checkbox" data-action="charquery-include-pinyin" ${query.includePinyin ? "checked" : ""}> 包括拼音</label>
-      <span class="cq-dim">共 ${total} 处</span>
+      <span class="cq-dim">${uniqueCount} 字 · ${total} 处</span>
     </div>
     <div class="cq-preview">
       ${groups.length ? groups.map((group) => `
@@ -468,8 +492,9 @@ function renderCharQueryStep(query) {
     <div class="cq-foot">
       <button data-action="charquery-back">← 上一步</button>
       <span class="cq-foot-actions">
-        <button data-action="charquery-print" ${total ? "" : "disabled"}>打印</button>
-        <button class="cq-primary" data-action="charquery-export-word" ${total ? "" : "disabled"}>导出 Word</button>
+        <button data-action="charquery-print" ${total ? "" : "disabled"}>打印 Word</button>
+        <button data-action="charquery-export-word" ${total ? "" : "disabled"}>导出 Word</button>
+        <button class="cq-primary" data-action="charquery-export-zitie" ${uniqueCount ? "" : "disabled"}>导出字帖</button>
       </span>
     </div>
   `;

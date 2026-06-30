@@ -63,9 +63,41 @@ export function radicalsInDecks(deckIds) {
 
 // Every matching character occurrence (one entry per distinct char per
 // sentence) in deck → page → sentence order.
-export function collectMatches(deckIds, radicals) {
+// Unique characters across the given decks whose radical is in `radicals`,
+// each with its occurrence count, sorted by count desc then by character.
+// sortBy: "freq" (出现次数降序，默认) | "radical"（按部首归类，与 Word 导出的分组顺序一致）。
+export function charsInDecks(deckIds, radicals, sortBy = "freq") {
   const ids = new Set(deckIds);
   const wanted = new Set(radicals);
+  const counts = new Map();
+  state.decks.forEach((deck) => {
+    if (!ids.has(deck.id)) return;
+    deck.pages.forEach((page) => {
+      for (const ch of String(page.mainText || "")) {
+        if (!isHanzi(ch)) continue;
+        const radical = lookupRadical(ch);
+        if (!radical || !wanted.has(radical)) continue;
+        counts.set(ch, (counts.get(ch) || 0) + 1);
+      }
+    });
+  });
+  const list = [...counts.entries()].map(([char, count]) => ({ char, count, radical: lookupRadical(char) }));
+  if (sortBy === "radical") {
+    const groupTotal = new Map();
+    for (const item of list) groupTotal.set(item.radical, (groupTotal.get(item.radical) || 0) + item.count);
+    return list.sort((a, b) =>
+      (groupTotal.get(b.radical) - groupTotal.get(a.radical))
+      || a.radical.localeCompare(b.radical)
+      || (b.count - a.count)
+      || a.char.localeCompare(b.char));
+  }
+  return list.sort((a, b) => b.count - a.count || a.char.localeCompare(b.char));
+}
+
+// `chars` is a Set of the characters to include (already chosen by the user).
+export function collectMatches(deckIds, chars) {
+  const ids = new Set(deckIds);
+  const wanted = chars instanceof Set ? chars : new Set(chars);
   const entries = [];
   state.decks.forEach((deck, deckOrder) => {
     if (!ids.has(deck.id)) return;
@@ -74,9 +106,8 @@ export function collectMatches(deckIds, radicals) {
       const tokenByIndex = new Map((page.tokens || []).map((token) => [token.index, token]));
       const seen = new Set();
       cps.forEach((ch, index) => {
-        if (!isHanzi(ch)) return;
+        if (!isHanzi(ch) || !wanted.has(ch)) return;
         const radical = lookupRadical(ch);
-        if (!radical || !wanted.has(radical)) return;
         const clauseIndex = clauseIndexOf[index];
         const key = `${clauseIndex}|${ch}`;
         if (seen.has(key)) return;
