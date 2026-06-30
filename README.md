@@ -30,7 +30,7 @@ npm run check
 - `src/storage.js`：持久化（IndexedDB 主存、localStorage 兜底）与讲义 JSON 导入/导出。
 - `src/render.js`：界面渲染，持有 `#app` 根元素。
 - `src/events.js`：事件委托与全部交互/数据操作逻辑。
-- `src/charquery.js`：按部首查询与导出（RTF / 打印）的纯逻辑。
+- `src/charquery.js`：按部首查询与导出（Word .docx / 打印）的纯逻辑。
 - `styles.css`：界面样式。
 - `vendor/data-chars.js`：从 `zdict.js` 下载的原始字库数据（仅作存档，运行时不加载）。
 - `vendor/data-chars-local.js`：浏览器实际加载的本地字库包装文件。
@@ -247,7 +247,9 @@ state.ui{…}              纯瞬时界面状态（选中、菜单、编辑中�
 
 例句抽取规则：取该字所在的子句；若子句以 `。！？`（或换行）结尾则只取该句，否则补上紧接的下一子句。拼音以讲义中用户为该字选定的读音为准（多音字可能已被纠正），无对应 token 时才回退到默认读音。
 
-导出为 **RTF** 文件（`查字-<日期>.rtf`），用宋体排版，可用 macOS 自带的 **Pages** 直接打开、编辑，再导出 PDF 时格式保持稳定；也可直接“打印”（浏览器打印对话框，可存为 PDF）。
+导出为 **Word（`查字-<日期>.docx`）**：用宋体排版，可用 macOS 自带的 **Pages** 直接打开编辑（无需 Microsoft Office），再导出 PDF 时格式稳定；浏览器下载的 .docx 也不会触发 macOS“无法验证是否含恶意软件”的提示。`.docx` 由内置的极小 ZIP + OOXML 生成器直接拼装，零第三方依赖。
+
+也可直接“打印”（浏览器打印对话框，可存为 PDF，不产生下载文件）。
 
 部首数据来自 `vendor/data-radicals.js`（make-me-a-hanzi），完全离线。
 

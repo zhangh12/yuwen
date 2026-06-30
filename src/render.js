@@ -468,7 +468,7 @@ function renderCharQueryStep(query) {
       <button data-action="charquery-back">← 上一步</button>
       <span class="cq-foot-actions">
         <button data-action="charquery-print" ${total ? "" : "disabled"}>打印</button>
-        <button class="cq-primary" data-action="charquery-export" ${total ? "" : "disabled"}>导出 RTF</button>
+        <button class="cq-primary" data-action="charquery-export-word" ${total ? "" : "disabled"}>导出 Word</button>
       </span>
     </div>
   `;

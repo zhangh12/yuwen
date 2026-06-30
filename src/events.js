@@ -29,7 +29,7 @@ import {
 } from "./core.js";
 import { render, app } from "./render.js";
 import { saveState, touchDeck, exportDeck, importData } from "./storage.js";
-import { radicalsInDecks, collectMatches, groupByRadical, buildRtf, buildPrintHtml } from "./charquery.js";
+import { radicalsInDecks, collectMatches, groupByRadical, buildDocx, buildPrintHtml } from "./charquery.js";
 
 // --- Delegated event installation -----------------------------------------
 
@@ -288,7 +288,7 @@ function handleAction(target, event) {
   if (action === "charquery-radicals-all") { toggleAllQueryRadicals(); return render(); }
   if (action === "charquery-generate") { state.ui.query.step = 3; return render(); }
   if (action === "charquery-include-pinyin") { state.ui.query.includePinyin = target.checked; return render(); }
-  if (action === "charquery-export") return exportCharQuery();
+  if (action === "charquery-export-word") return exportCharQueryWord();
   if (action === "charquery-print") return printCharQuery();
 
   if (action === "toggle-deck-picker") {
@@ -1088,18 +1088,22 @@ function currentQueryGroups() {
   return groupByRadical(collectMatches(query.deckIds, query.radicals));
 }
 
-function exportCharQuery() {
-  const groups = currentQueryGroups();
-  const rtf = buildRtf(groups, state.ui.query.includePinyin);
-  const blob = new Blob([rtf], { type: "application/rtf" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `查字-${new Date().toISOString().slice(0, 10)}.rtf`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+function exportCharQueryWord() {
+  try {
+    const docx = buildDocx(currentQueryGroups(), state.ui.query.includePinyin);
+    const blob = new Blob([docx], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `查字-${new Date().toISOString().slice(0, 10)}.docx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error(error);
+    window.alert(`导出 Word 失败：${error && error.message}`);
+  }
 }
 
 function printCharQuery() {

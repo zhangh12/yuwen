@@ -2,9 +2,9 @@
 //
 // Given a set of decks and radicals, collect every matching character together
 // with the full sentence it appears in and its source (deck + page), then build
-// a printable document. Export target is RTF (opens natively in Pages and keeps
-// its formatting when exported to PDF). No DOM access here — the download/print
-// side effects live in events.js.
+// a printable document. Export target is Word (.docx), which opens natively in
+// Pages (no Office needed) and keeps its formatting when exported to PDF. No DOM
+// access here — the download/print side effects live in events.js.
 
 import { state, lookupRadical, lookupPinyin, isHanzi } from "./core.js";
 
@@ -146,55 +146,146 @@ export function headerLine(block, includePinyin) {
   return `${chars} —— ${block.deckTitle} · 第${block.pageIndex + 1}页`;
 }
 
-// --- RTF (opens in Pages) --------------------------------------------------
-
-function rtfEscape(text) {
-  let out = "";
-  const str = String(text);
-  for (let i = 0; i < str.length; i++) {
-    const ch = str[i];
-    const code = str.charCodeAt(i);
-    if (ch === "\\" || ch === "{" || ch === "}") out += "\\" + ch;
-    else if (code < 128) out += ch;
-    else out += "\\u" + (code > 32767 ? code - 65536 : code) + "?";
-  }
-  return out;
-}
-
-function rtfSentence(sentence, highlightSet) {
-  let out = "";
-  for (const ch of sentence) {
-    const piece = rtfEscape(ch);
-    out += highlightSet.has(ch) ? `{\\cf2\\b ${piece}}` : piece;
-  }
-  return out;
-}
-
-export function buildRtf(groups, includePinyin) {
-  const header = "{\\rtf1\\ansi\\ansicpg936\\deff0"
-    + "{\\fonttbl{\\f0\\froman\\fcharset134 Songti SC;}}"
-    + "{\\colortbl;\\red30\\green30\\blue30;\\red200\\green30\\blue30;}"
-    + "\\f0\\fs24\\cf1 ";
-  let body = "";
-  groups.forEach(({ radical, items }, groupIndex) => {
-    // Each radical starts on a new page.
-    if (groupIndex > 0) body += "\\page ";
-    body += `{\\b\\fs40\\sa120 ${rtfEscape(radical)}}\\par `;
-    for (const block of mergeBySentence(items)) {
-      const highlight = new Set(block.chars.map((item) => item.char));
-      body += `{\\fs26 ${rtfEscape(headerLine(block, includePinyin))}}\\par `;
-      body += `{\\fs24 ${rtfSentence(block.sentence, highlight)}}\\par `;
-      // Blank line after each example.
-      body += "\\par ";
-    }
-  });
-  return header + body + "}";
-}
-
 // --- Printable HTML --------------------------------------------------------
 
 function htmlEscape(text) {
   return String(text).replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[m]));
+}
+
+// --- Word (.docx) ----------------------------------------------------------
+//
+// A .docx is a ZIP of XML parts. We hand-build a minimal OOXML package and a
+// tiny "stored" (uncompressed) ZIP so there is no third-party dependency.
+// Browser-downloaded .docx does not trigger the macOS Gatekeeper "cannot verify
+// it is free of malware" prompt (which some other downloaded document formats
+// do), and Pages opens it (no Office required).
+
+function xmlEscape(text) {
+  return String(text).replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
+}
+
+function docxRun(text, opts = {}) {
+  const props = [
+    '<w:rFonts w:ascii="Songti SC" w:hAnsi="Songti SC" w:eastAsia="Songti SC"/>',
+    opts.bold ? "<w:b/>" : "",
+    opts.color ? `<w:color w:val="${opts.color}"/>` : "",
+    opts.sz ? `<w:sz w:val="${opts.sz}"/><w:szCs w:val="${opts.sz}"/>` : ""
+  ].join("");
+  return `<w:r><w:rPr>${props}</w:rPr><w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r>`;
+}
+
+function docxPara(runs, opts = {}) {
+  const props = [
+    opts.pageBreak ? "<w:pageBreakBefore/>" : "",
+    opts.after != null ? `<w:spacing w:after="${opts.after}"/>` : ""
+  ].join("");
+  return `<w:p>${props ? `<w:pPr>${props}</w:pPr>` : ""}${runs}</w:p>`;
+}
+
+function docxSentence(sentence, highlight) {
+  let runs = "";
+  let buffer = "";
+  const flush = () => { if (buffer) { runs += docxRun(buffer, { sz: 24 }); buffer = ""; } };
+  for (const ch of sentence) {
+    if (highlight.has(ch)) {
+      flush();
+      runs += docxRun(ch, { bold: true, color: "C81E1E", sz: 24 });
+    } else {
+      buffer += ch;
+    }
+  }
+  flush();
+  return runs;
+}
+
+function buildDocumentXml(groups, includePinyin) {
+  let paragraphs = "";
+  groups.forEach(({ radical, items }, groupIndex) => {
+    paragraphs += docxPara(docxRun(radical, { bold: true, sz: 40 }), { pageBreak: groupIndex > 0, after: 120 });
+    for (const block of mergeBySentence(items)) {
+      const highlight = new Set(block.chars.map((item) => item.char));
+      paragraphs += docxPara(docxRun(headerLine(block, includePinyin), { sz: 26 }));
+      paragraphs += docxPara(docxSentence(block.sentence, highlight));
+      paragraphs += "<w:p/>";
+    }
+  });
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    + `<w:body>${paragraphs}<w:sectPr/></w:body></w:document>`;
+}
+
+const CONTENT_TYPES_XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+  + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+  + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+  + '<Default Extension="xml" ContentType="application/xml"/>'
+  + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+  + "</Types>";
+
+const ROOT_RELS_XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+  + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+  + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+  + "</Relationships>";
+
+function crc32(bytes) {
+  let crc = ~0;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i];
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xEDB88320 & -(crc & 1));
+  }
+  return (~crc) >>> 0;
+}
+
+// Build an uncompressed (stored) ZIP from [{name, data: Uint8Array}].
+function zipStore(files) {
+  const u16 = (n) => [n & 255, (n >>> 8) & 255];
+  const u32 = (n) => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
+  const encoder = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const file of files) {
+    const nameBytes = encoder.encode(file.name);
+    const crc = crc32(file.data);
+    const local = Uint8Array.from([
+      ...u32(0x04034b50), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(file.data.length), ...u32(file.data.length),
+      ...u16(nameBytes.length), ...u16(0)
+    ]);
+    parts.push(local, nameBytes, file.data);
+    central.push({ nameBytes, crc, size: file.data.length, offset });
+    offset += local.length + nameBytes.length + file.data.length;
+  }
+  const cdStart = offset;
+  const cdParts = [];
+  for (const entry of central) {
+    const record = Uint8Array.from([
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(entry.crc), ...u32(entry.size), ...u32(entry.size),
+      ...u16(entry.nameBytes.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0),
+      ...u32(entry.offset)
+    ]);
+    cdParts.push(record, entry.nameBytes);
+    offset += record.length + entry.nameBytes.length;
+  }
+  const end = Uint8Array.from([
+    ...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(central.length), ...u16(central.length),
+    ...u32(offset - cdStart), ...u32(cdStart), ...u16(0)
+  ]);
+  const all = [...parts, ...cdParts, end];
+  const total = all.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(total);
+  let pointer = 0;
+  for (const part of all) { out.set(part, pointer); pointer += part.length; }
+  return out;
+}
+
+export function buildDocx(groups, includePinyin) {
+  const encoder = new TextEncoder();
+  return zipStore([
+    { name: "[Content_Types].xml", data: encoder.encode(CONTENT_TYPES_XML) },
+    { name: "_rels/.rels", data: encoder.encode(ROOT_RELS_XML) },
+    { name: "word/document.xml", data: encoder.encode(buildDocumentXml(groups, includePinyin)) }
+  ]);
 }
 
 export function buildPrintHtml(groups, includePinyin) {
