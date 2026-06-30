@@ -56,7 +56,8 @@ export const state = {
     annotationColor: "",
     annotating: false,
     annotationOriginalColors: {},
-    zdictIndex: 0
+    zdictIndex: 0,
+    query: null
   }
 };
 
@@ -104,6 +105,11 @@ export function lookupZdict(char) {
 
 export function normalizePinyin(value) {
   return String(value).trim();
+}
+
+// Radical (部首) for a character from the bundled make-me-a-hanzi data.
+export function lookupRadical(char) {
+  return (window.zRadicals && window.zRadicals[char]) || "";
 }
 
 // Built-in dictionary meanings for a character at a given reading, used as a

@@ -29,6 +29,7 @@ import {
 } from "./core.js";
 import { render, app } from "./render.js";
 import { saveState, touchDeck, exportDeck, importData } from "./storage.js";
+import { radicalsInDecks, collectMatches, groupByRadical, buildRtf, buildPrintHtml } from "./charquery.js";
 
 // --- Delegated event installation -----------------------------------------
 
@@ -108,6 +109,12 @@ function onAppClick(event) {
     state.activePageId = pageEl.dataset.pageId;
     clearTransient();
     saveState();
+    render();
+    return;
+  }
+
+  if (el.matches(".cq-overlay")) {
+    state.ui.query = null;
     render();
     return;
   }
@@ -270,6 +277,19 @@ function handleAction(target, event) {
   if (action === "delete-page") return deletePage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "export-deck") return exportSelectedDeck();
   if (action === "import-deck") return importDecksFlow();
+
+  if (action === "open-charquery") return openCharQuery();
+  if (action === "charquery-close") { state.ui.query = null; return render(); }
+  if (action === "charquery-decks-all") { toggleAllQueryDecks(); return render(); }
+  if (action === "charquery-deck") { selectQueryDeck(Number(target.dataset.index), target.dataset.deckId, event.shiftKey); return render(); }
+  if (action === "charquery-next") { state.ui.query.step = 2; return render(); }
+  if (action === "charquery-back") { state.ui.query.step = Math.max(1, state.ui.query.step - 1); return render(); }
+  if (action === "charquery-radical") { toggleQueryRadical(target.dataset.radical); return render(); }
+  if (action === "charquery-radicals-all") { toggleAllQueryRadicals(); return render(); }
+  if (action === "charquery-generate") { state.ui.query.step = 3; return render(); }
+  if (action === "charquery-include-pinyin") { state.ui.query.includePinyin = target.checked; return render(); }
+  if (action === "charquery-export") return exportCharQuery();
+  if (action === "charquery-print") return printCharQuery();
 
   if (action === "toggle-deck-picker") {
     state.ui.deckPickerOpen = !state.ui.deckPickerOpen;
@@ -1014,6 +1034,84 @@ function exportSelectedDeck() {
   render();
 }
 
+// --- 查字（按部首查询并导出）----------------------------------------------
+
+function openCharQuery() {
+  state.ui.query = {
+    open: true,
+    step: 1,
+    deckIds: state.decks.map((deck) => deck.id),
+    lastDeckIndex: -1,
+    radicals: [],
+    includePinyin: true
+  };
+  closeFloaters();
+  render();
+}
+
+function toggleAllQueryDecks() {
+  const query = state.ui.query;
+  query.deckIds = query.deckIds.length === state.decks.length ? [] : state.decks.map((deck) => deck.id);
+}
+
+function selectQueryDeck(index, deckId, shiftKey) {
+  const query = state.ui.query;
+  const ids = new Set(query.deckIds);
+  if (shiftKey && query.lastDeckIndex >= 0) {
+    const [from, to] = [query.lastDeckIndex, index].sort((a, b) => a - b);
+    for (let i = from; i <= to; i++) ids.add(state.decks[i].id);
+  } else if (ids.has(deckId)) {
+    ids.delete(deckId);
+  } else {
+    ids.add(deckId);
+  }
+  query.deckIds = state.decks.filter((deck) => ids.has(deck.id)).map((deck) => deck.id);
+  query.lastDeckIndex = index;
+}
+
+function toggleQueryRadical(radical) {
+  const query = state.ui.query;
+  query.radicals = query.radicals.includes(radical)
+    ? query.radicals.filter((item) => item !== radical)
+    : [...query.radicals, radical];
+}
+
+function toggleAllQueryRadicals() {
+  const query = state.ui.query;
+  const present = radicalsInDecks(query.deckIds).map((item) => item.radical);
+  const allSelected = present.length > 0 && present.every((radical) => query.radicals.includes(radical));
+  query.radicals = allSelected ? [] : present;
+}
+
+function currentQueryGroups() {
+  const query = state.ui.query;
+  return groupByRadical(collectMatches(query.deckIds, query.radicals));
+}
+
+function exportCharQuery() {
+  const groups = currentQueryGroups();
+  const rtf = buildRtf(groups, state.ui.query.includePinyin);
+  const blob = new Blob([rtf], { type: "application/rtf" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `查字-${new Date().toISOString().slice(0, 10)}.rtf`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function printCharQuery() {
+  const html = buildPrintHtml(currentQueryGroups(), state.ui.query.includePinyin);
+  const win = window.open("", "_blank");
+  if (!win) return;
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  win.print();
+}
+
 function importDecksFlow() {
   const input = document.createElement("input");
   input.type = "file";
@@ -1037,6 +1135,11 @@ function importDecksFlow() {
 
 function onDocumentKeyDown(event) {
   if (event.key === "Escape") {
+    if (state.ui.query?.open) {
+      state.ui.query = null;
+      render();
+      return;
+    }
     closeFloaters();
     state.ui.annotating = false;
     state.ui.annotationOriginalColors = {};

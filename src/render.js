@@ -16,6 +16,7 @@ import {
   imageContext,
   lookupZdictMeanings
 } from "./core.js";
+import { radicalsInDecks, collectMatches, groupByRadical, mergeBySentence, headerLine } from "./charquery.js";
 
 export const app = document.querySelector("#app");
 
@@ -35,6 +36,13 @@ function renderHighlightedText(value, highlightChar) {
       return `<span class="inline-highlight">${escaped}</span>`;
     }
     return escaped;
+  }).join("");
+}
+
+function renderHighlightedSet(value, charSet) {
+  return [...String(value || "")].map((char) => {
+    const escaped = escapeHtml(char);
+    return charSet.has(char) ? `<span class="inline-highlight">${escaped}</span>` : escaped;
   }).join("");
 }
 
@@ -59,6 +67,7 @@ export function render() {
       ${renderDeckContextMenu()}
       ${renderPageContextMenu()}
       ${renderPinyinMenu()}
+      ${renderCharQuery()}
     </div>
   `;
 
@@ -99,6 +108,7 @@ function renderFullShell(deck, page, flags) {
       <div class="toolbar-group">
         <button data-action="toggle-deck-picker">讲义</button>
         <span class="active-deck-title" title="${escapeHtml(deck.title)}">${escapeHtml(deck.title)}</span>
+        <button title="按部首查字并导出" data-action="open-charquery">查字</button>
       </div>
       <div class="toolbar-group">
         <label class="toggle"><input type="checkbox" data-action="toggle-pinyin" ${deck.settings.showPinyin ? "checked" : ""}> 拼音</label>
@@ -366,6 +376,100 @@ function renderPageContextMenu() {
     <div class="context-menu" style="left:${state.ui.pageContext.x}px;top:${state.ui.pageContext.y}px">
       <button class="menu-item" data-action="copy-page" data-page-id="${state.ui.pageContext.pageId}">复制页面</button>
       <button class="menu-item" data-action="delete-page" data-page-id="${state.ui.pageContext.pageId}">删除页面</button>
+    </div>
+  `;
+}
+
+function renderCharQuery() {
+  const query = state.ui.query;
+  if (!query?.open) return "";
+
+  const stepLabel = { 1: "①选择讲义", 2: "②选择部首", 3: "③预览导出" }[query.step];
+  return `
+    <div class="cq-overlay">
+      <div class="cq-dialog">
+        <div class="cq-head">
+          <span>查字导出 · ${stepLabel}</span>
+          <button class="cq-x" data-action="charquery-close" aria-label="关闭">×</button>
+        </div>
+        <div class="cq-body">${renderCharQueryStep(query)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderCharQueryStep(query) {
+  if (query.step === 1) {
+    const allSelected = query.deckIds.length === state.decks.length && state.decks.length > 0;
+    return `
+      <div class="cq-toolbar">
+        <button data-action="charquery-decks-all">${allSelected ? "全不选" : "全选"}</button>
+        <span class="cq-dim">已选 ${query.deckIds.length} / ${state.decks.length} 册（可 Shift 点击选区间）</span>
+      </div>
+      <div class="cq-list">
+        ${state.decks.map((deck, index) => `
+          <button class="cq-row ${query.deckIds.includes(deck.id) ? "is-sel" : ""}" data-action="charquery-deck" data-index="${index}" data-deck-id="${deck.id}">
+            <span class="cq-check">${query.deckIds.includes(deck.id) ? "☑" : "☐"}</span>
+            <span class="cq-row-title">${escapeHtml(deck.title)}</span>
+            <span class="cq-dim">${deck.pages.length} 页</span>
+          </button>
+        `).join("")}
+      </div>
+      <div class="cq-foot">
+        <span></span>
+        <button class="cq-primary" data-action="charquery-next" ${query.deckIds.length ? "" : "disabled"}>下一步 →</button>
+      </div>
+    `;
+  }
+
+  if (query.step === 2) {
+    const radicals = radicalsInDecks(query.deckIds);
+    const present = radicals.map((item) => item.radical);
+    const allSelected = present.length > 0 && present.every((radical) => query.radicals.includes(radical));
+    const chosen = query.radicals.filter((radical) => present.includes(radical));
+    return `
+      <div class="cq-toolbar">
+        <button data-action="charquery-radicals-all">${allSelected ? "全不选" : "全选"}</button>
+        <span class="cq-dim">基于 ${query.deckIds.length} 册 · 已选 ${chosen.length} / ${present.length} 个部首</span>
+      </div>
+      <div class="cq-chips">
+        ${radicals.length ? radicals.map((item) => `
+          <button class="cq-chip ${query.radicals.includes(item.radical) ? "is-sel" : ""}" data-action="charquery-radical" data-radical="${escapeHtml(item.radical)}">${escapeHtml(item.radical)} <span class="cq-dim">${item.count}</span></button>
+        `).join("") : `<span class="cq-dim">所选讲义中没有可识别部首的字。</span>`}
+      </div>
+      <div class="cq-foot">
+        <button data-action="charquery-back">← 上一步</button>
+        <button class="cq-primary" data-action="charquery-generate" ${chosen.length ? "" : "disabled"}>生成预览 →</button>
+      </div>
+    `;
+  }
+
+  const groups = groupByRadical(collectMatches(query.deckIds, query.radicals));
+  const total = groups.reduce((sum, group) => sum + group.items.length, 0);
+  return `
+    <div class="cq-toolbar">
+      <label class="toggle"><input type="checkbox" data-action="charquery-include-pinyin" ${query.includePinyin ? "checked" : ""}> 包括拼音</label>
+      <span class="cq-dim">共 ${total} 处</span>
+    </div>
+    <div class="cq-preview">
+      ${groups.length ? groups.map((group) => `
+        <div class="cq-group">
+          <div class="cq-radical">${escapeHtml(group.radical)}</div>
+          ${mergeBySentence(group.items).map((block) => `
+            <div class="cq-entry">
+              <div class="cq-entry-meta">${escapeHtml(headerLine(block, query.includePinyin))}</div>
+              <div class="cq-entry-sent">${renderHighlightedSet(block.sentence, new Set(block.chars.map((item) => item.char)))}</div>
+            </div>
+          `).join("")}
+        </div>
+      `).join("") : `<span class="cq-dim">没有匹配的字。</span>`}
+    </div>
+    <div class="cq-foot">
+      <button data-action="charquery-back">← 上一步</button>
+      <span class="cq-foot-actions">
+        <button data-action="charquery-print" ${total ? "" : "disabled"}>打印</button>
+        <button class="cq-primary" data-action="charquery-export" ${total ? "" : "disabled"}>导出 RTF</button>
+      </span>
     </div>
   `;
 }
