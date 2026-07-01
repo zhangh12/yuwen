@@ -9,10 +9,11 @@ import {
   STORAGE_KEY,
   state,
   getActiveDeck,
-  createDeck,
+  getActiveBook,
+  createBook,
   createPage,
   tokenizePage,
-  ensureDeckModel,
+  ensureBookModel,
   deepClone,
   id
 } from "./core.js";
@@ -62,19 +63,42 @@ function idbSet(key, value) {
 
 function buildPayload() {
   return {
-    decks: state.decks,
+    version: 2,
+    books: state.books,
+    activeBookId: state.activeBookId,
     activeDeckId: state.activeDeckId,
     activePageId: state.activePageId
   };
 }
 
+// Accept both the new books[] payload and the legacy flat decks[] payload,
+// wrapping the latter into a single default book so no existing data is lost.
+function normalizeToBooks(stored) {
+  if (Array.isArray(stored.books)) return stored;
+  const book = {
+    id: id("book"),
+    title: "我的课本",
+    updatedAt: Date.now(),
+    lexicon: {},
+    texts: stored.decks
+  };
+  return {
+    books: [book],
+    activeBookId: book.id,
+    activeDeckId: stored.activeDeckId,
+    activePageId: stored.activePageId
+  };
+}
+
 function applyLoadedState(stored) {
-  state.decks = stored.decks;
-  state.activeDeckId = stored.activeDeckId || stored.decks[0].id;
-  state.activePageId = stored.activePageId || getActiveDeck()?.pages?.[0]?.id || "";
-  state.decks.forEach((deck) => {
-    deck.pages.forEach(tokenizePage);
-    ensureDeckModel(deck);
+  const normalized = normalizeToBooks(stored);
+  state.books = normalized.books;
+  state.activeBookId = normalized.activeBookId || state.books[0].id;
+  state.activeDeckId = normalized.activeDeckId || getActiveBook()?.texts?.[0]?.id || "";
+  state.activePageId = normalized.activePageId || getActiveDeck()?.pages?.[0]?.id || "";
+  state.books.forEach((book) => {
+    book.texts.forEach((deck) => deck.pages.forEach(tokenizePage));
+    ensureBookModel(book);
   });
 }
 
@@ -100,26 +124,32 @@ export async function loadState() {
     stored = null;
   }
 
-  if (!stored?.decks?.length) {
-    // Migrate decks saved by the older localStorage-only build.
+  const hasData = (value) => value
+    && ((Array.isArray(value.books) && value.books.length)
+      || (Array.isArray(value.decks) && value.decks.length));
+
+  if (!hasData(stored)) {
+    // Migrate a payload saved by the older localStorage-only build (either the
+    // new books shape or the legacy decks shape).
     try {
       const legacy = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      if (legacy?.decks?.length) stored = legacy;
+      if (hasData(legacy)) stored = legacy;
     } catch {
       localStorage.removeItem(STORAGE_KEY);
     }
   }
 
-  if (stored?.decks?.length) {
+  if (hasData(stored)) {
     applyLoadedState(stored);
     saveState();
     return;
   }
 
-  const deck = createDeck();
-  state.decks = [deck];
-  state.activeDeckId = deck.id;
-  state.activePageId = deck.pages[0].id;
+  const book = createBook();
+  state.books = [book];
+  state.activeBookId = book.id;
+  state.activeDeckId = book.texts[0].id;
+  state.activePageId = book.texts[0].pages[0].id;
   saveState();
 }
 
@@ -186,8 +216,11 @@ export function exportDeck(deck) {
 
 // Append imported decks as new decks (with fresh ids) so importing never
 // overwrites the existing library. Returns the first imported deck.
+// Phase ① placeholder: import a legacy backup ({decks:[…]}) as one new book.
+// The proper backup import (yuwen-backup envelope + target-book choice) lands in
+// a later phase and will replace this.
 function appendImportedDecks(stored) {
-  const imported = stored.decks.map((source) => {
+  const texts = stored.decks.map((source) => {
     const deck = deepClone(source);
     deck.id = id("deck");
     deck.updatedAt = Date.now();
@@ -197,13 +230,19 @@ function appendImportedDecks(stored) {
     });
     return deck;
   });
-  imported.forEach((deck) => {
-    deck.pages.forEach(tokenizePage);
-    ensureDeckModel(deck);
-    state.decks.push(deck);
-  });
-  state.activeDeckId = imported[0].id;
-  state.activePageId = imported[0].pages[0].id;
+  const book = {
+    id: id("book"),
+    title: "导入的课本",
+    updatedAt: Date.now(),
+    lexicon: {},
+    texts
+  };
+  book.texts.forEach((deck) => deck.pages.forEach(tokenizePage));
+  ensureBookModel(book);
+  state.books.push(book);
+  state.activeBookId = book.id;
+  state.activeDeckId = book.texts[0].id;
+  state.activePageId = book.texts[0].pages[0].id;
 }
 
 // Import a "yuwen-pages" file: append each page to the CURRENT deck. yuwen

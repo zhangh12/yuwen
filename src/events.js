@@ -8,6 +8,7 @@
 
 import {
   state,
+  getActiveBook,
   getActiveDeck,
   getActivePage,
   getToken,
@@ -21,9 +22,11 @@ import {
   cycleIndex,
   closeFloaters,
   clearTransient,
+  createBook,
   createDeck,
   createPage,
   tokenizePage,
+  allTexts,
   deepClone,
   id
 } from "./core.js";
@@ -96,8 +99,10 @@ function onAppClick(event) {
 
   const deckEl = el.closest("[data-deck-id]");
   if (deckEl) {
+    // Switch the book first so getActiveDeck() resolves within the right book.
+    if (deckEl.dataset.bookId) state.activeBookId = deckEl.dataset.bookId;
     state.activeDeckId = deckEl.dataset.deckId;
-    state.activePageId = getActiveDeck().pages[0]?.id || "";
+    state.activePageId = getActiveDeck()?.pages[0]?.id || "";
     clearTransient();
     state.ui.deckPickerOpen = false;
     saveState();
@@ -154,7 +159,20 @@ function onAppContextMenu(event) {
   const deckEl = el.closest("[data-deck-id]");
   if (deckEl) {
     event.preventDefault();
-    state.ui.deckContext = { x: event.clientX, y: event.clientY, deckId: deckEl.dataset.deckId };
+    state.ui.deckContext = { x: event.clientX, y: event.clientY, deckId: deckEl.dataset.deckId, bookId: deckEl.dataset.bookId };
+    state.ui.bookContext = null;
+    state.ui.pageContext = null;
+    state.ui.menu = null;
+    state.ui.pinyinMenu = null;
+    render();
+    return;
+  }
+
+  const bookEl = el.closest("[data-book-id]");
+  if (bookEl) {
+    event.preventDefault();
+    state.ui.bookContext = { x: event.clientX, y: event.clientY, bookId: bookEl.dataset.bookId };
+    state.ui.deckContext = null;
     state.ui.pageContext = null;
     state.ui.menu = null;
     state.ui.pinyinMenu = null;
@@ -287,7 +305,11 @@ function handleAction(target, event) {
   const deck = getActiveDeck();
   event.stopPropagation();
 
-  if (action === "new-deck") return newDeck();
+  if (action === "new-book") return newBook();
+  if (action === "toggle-book") return toggleBook(target.dataset.bookId);
+  if (action === "rename-book") return renameBook(state.ui.bookContext?.bookId);
+  if (action === "delete-book") return deleteBook(state.ui.bookContext?.bookId);
+  if (action === "new-deck") return newDeck(target.dataset.bookId || state.ui.bookContext?.bookId);
   if (action === "rename-deck") return renameDeck(state.ui.deckContext?.deckId);
   if (action === "copy-deck") return copyDeck(state.ui.deckContext?.deckId);
   if (action === "delete-deck") return deleteDeck(state.ui.deckContext?.deckId);
@@ -802,23 +824,94 @@ function ensureActiveFromMenu() {
   if (state.ui.menu?.tokenId) state.ui.activeTokenId = state.ui.menu.tokenId;
 }
 
-function newDeck() {
-  const name = window.prompt("讲义名称", "新的语文讲义");
+function findBook(bookId) {
+  return state.books.find((book) => book.id === bookId);
+}
+
+function findDeckAndBook(deckId) {
+  for (const book of state.books) {
+    const deck = book.texts.find((item) => item.id === deckId);
+    if (deck) return { deck, book };
+  }
+  return { deck: null, book: null };
+}
+
+// --- 课本 (book) ------------------------------------------------------------
+
+function newBook() {
+  const name = window.prompt("课本名称", "新课本");
   if (!name) return;
-  const deck = createDeck(name);
-  state.decks.unshift(deck);
+  const book = createBook(name);
+  state.books.push(book);
+  state.activeBookId = book.id;
+  state.activeDeckId = book.texts[0].id;
+  state.activePageId = book.texts[0].pages[0].id;
+  clearTransient();
+  state.ui.deckPickerOpen = true;
+  saveState();
+  render();
+}
+
+function toggleBook(bookId) {
+  if (!bookId) return;
+  state.ui.expandedBookIds ||= [];
+  const at = state.ui.expandedBookIds.indexOf(bookId);
+  if (at >= 0) state.ui.expandedBookIds.splice(at, 1);
+  else state.ui.expandedBookIds.push(bookId);
+  render();
+}
+
+function renameBook(bookId = state.activeBookId) {
+  const book = findBook(bookId);
+  if (!book) return;
+  const name = window.prompt("课本名称", book.title);
+  if (!name) return;
+  book.title = name;
+  book.updatedAt = Date.now();
+  state.ui.bookContext = null;
+  saveState();
+  render();
+}
+
+function deleteBook(bookId = state.activeBookId) {
+  if (state.books.length <= 1) { window.alert("至少保留一本课本。"); return; }
+  const book = findBook(bookId);
+  if (!book) return;
+  if (!window.confirm(`删除课本“${book.title}”及其中的全部课文？`)) return;
+  state.books = state.books.filter((item) => item.id !== book.id);
+  if (state.activeBookId === book.id) {
+    const first = state.books[0];
+    state.activeBookId = first.id;
+    state.activeDeckId = first.texts[0].id;
+    state.activePageId = first.texts[0].pages[0].id;
+  }
+  clearTransient();
+  saveState();
+  render();
+}
+
+// --- 课文 (deck) ------------------------------------------------------------
+
+function newDeck(bookId = state.activeBookId) {
+  const book = findBook(bookId) || getActiveBook();
+  const name = window.prompt("课文名称", `课文 ${book.texts.length + 1}`);
+  if (!name) return;
+  const deck = createDeck(name, "");
+  book.texts.push(deck);
+  book.updatedAt = Date.now();
+  state.activeBookId = book.id;
   state.activeDeckId = deck.id;
   state.activePageId = deck.pages[0].id;
   clearTransient();
-  state.ui.deckPickerOpen = false;
+  state.ui.deckPickerOpen = true;
   saveState();
   render();
 }
 
 function renameDeck(deckId = state.activeDeckId) {
-  const deck = state.decks.find((item) => item.id === deckId);
+  const { deck } = findDeckAndBook(deckId);
   if (!deck) return;
-  const name = window.prompt("讲义名称", deck.title);
+  const name = window.prompt("课文名称", deck.title);
   if (!name) return;
   deck.title = name;
   state.ui.deckContext = null;
@@ -827,7 +920,8 @@ function renameDeck(deckId = state.activeDeckId) {
 }
 
 function copyDeck(deckId = state.activeDeckId) {
-  const source = state.decks.find((item) => item.id === deckId) || getActiveDeck();
+  const { deck: source, book } = findDeckAndBook(deckId);
+  if (!source || !book) return;
   const deck = deepClone(source);
   deck.id = id("deck");
   deck.title = `${source.title} 副本`;
@@ -836,31 +930,31 @@ function copyDeck(deckId = state.activeDeckId) {
     page.id = id("page");
     page.tokens.forEach((token) => token.id = id("tok"));
   });
-  state.decks.unshift(deck);
+  const index = book.texts.findIndex((item) => item.id === source.id);
+  book.texts.splice(index + 1, 0, deck);
+  state.activeBookId = book.id;
   state.activeDeckId = deck.id;
   state.activePageId = deck.pages[0].id;
-  state.ui.deckContext = null;
-  state.ui.pageContext = null;
-  state.ui.menu = null;
-  state.ui.deckPickerOpen = false;
+  clearTransient();
+  state.ui.deckPickerOpen = true;
   saveState();
   render();
 }
 
 function deleteDeck(deckId = state.activeDeckId) {
-  if (state.decks.length <= 1) return;
-  const deck = state.decks.find((item) => item.id === deckId);
-  if (!deck) return;
-  if (!window.confirm(`删除讲义“${deck.title}”？`)) return;
-  state.decks = state.decks.filter((item) => item.id !== deck.id);
+  const { deck, book } = findDeckAndBook(deckId);
+  if (!deck || !book) return;
+  if (book.texts.length <= 1) { window.alert("每本课本至少保留一篇课文；如需清空请删除整本课本。"); return; }
+  if (!window.confirm(`删除课文“${deck.title}”？`)) return;
+  const index = book.texts.findIndex((item) => item.id === deck.id);
+  book.texts = book.texts.filter((item) => item.id !== deck.id);
   if (state.activeDeckId === deck.id) {
-    state.activeDeckId = state.decks[0].id;
-    state.activePageId = state.decks[0].pages[0].id;
+    state.activeBookId = book.id;
+    const next = book.texts[Math.max(0, index - 1)];
+    state.activeDeckId = next.id;
+    state.activePageId = next.pages[0].id;
   }
   clearTransient();
-  state.ui.deckContext = null;
-  state.ui.pageContext = null;
-  state.ui.menu = null;
   saveState();
   render();
 }
@@ -1117,19 +1211,22 @@ function speakText(text) {
 // --- Import / export -------------------------------------------------------
 
 function exportSelectedDeck() {
-  const deck = state.decks.find((item) => item.id === state.ui.deckContext?.deckId) || getActiveDeck();
+  const { deck } = findDeckAndBook(state.ui.deckContext?.deckId);
+  const target = deck || getActiveDeck();
   state.ui.deckContext = null;
-  if (deck) exportDeck(deck);
+  if (target) exportDeck(target);
   render();
 }
 
 // --- 查字（按部首查询并导出）----------------------------------------------
+// Selection is over 课文 across all books (flat list from allTexts()); a proper
+// two-level 课本→课文 tree lands in a later phase.
 
 function openCharQuery() {
   state.ui.query = {
     open: true,
     step: 1,
-    deckIds: state.decks.map((deck) => deck.id),
+    deckIds: allTexts().map((deck) => deck.id),
     lastDeckIndex: -1,
     radicals: [],
     chars: [],
@@ -1142,21 +1239,23 @@ function openCharQuery() {
 
 function toggleAllQueryDecks() {
   const query = state.ui.query;
-  query.deckIds = query.deckIds.length === state.decks.length ? [] : state.decks.map((deck) => deck.id);
+  const texts = allTexts();
+  query.deckIds = query.deckIds.length === texts.length ? [] : texts.map((deck) => deck.id);
 }
 
 function selectQueryDeck(index, deckId, shiftKey) {
   const query = state.ui.query;
+  const texts = allTexts();
   const ids = new Set(query.deckIds);
   if (shiftKey && query.lastDeckIndex >= 0) {
     const [from, to] = [query.lastDeckIndex, index].sort((a, b) => a - b);
-    for (let i = from; i <= to; i++) ids.add(state.decks[i].id);
+    for (let i = from; i <= to; i++) ids.add(texts[i].id);
   } else if (ids.has(deckId)) {
     ids.delete(deckId);
   } else {
     ids.add(deckId);
   }
-  query.deckIds = state.decks.filter((deck) => ids.has(deck.id)).map((deck) => deck.id);
+  query.deckIds = texts.filter((deck) => ids.has(deck.id)).map((deck) => deck.id);
   query.lastDeckIndex = index;
 }
 

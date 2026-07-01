@@ -33,8 +33,13 @@ export const FALLBACK_PINYIN = {
   就: ["jiù"], 又: ["yòu"], 从: ["cóng"], 把: ["bǎ", "bà"], 给: ["gěi", "jǐ"], 对: ["duì"], 过: ["guò"], 用: ["yòng"], 自: ["zì"], 己: ["jǐ"]
 };
 
+// Two-level model: state.books[] each own an ordered texts[] (课文 = a "deck")
+// and a book-level lexicon shared by "字|拼音" across that book's texts. Only one
+// 课文 is ever open for editing at a time (activeBookId + activeDeckId), so the
+// whole editing/render surface still works against a single active deck.
 export const state = {
-  decks: [],
+  books: [],
+  activeBookId: "",
   activeDeckId: "",
   activePageId: "",
   ui: {
@@ -46,6 +51,8 @@ export const state = {
     menu: null,
     pinyinMenu: null,
     deckPickerOpen: false,
+    expandedBookIds: [],
+    bookContext: null,
     deckContext: null,
     pageContext: null,
     draggedPageId: "",
@@ -193,8 +200,10 @@ export function createPage(title = "新页面", text = "") {
   return page;
 }
 
-export function createDeck(title = "我的语文讲义") {
-  const deck = {
+// A 课文 (internally still called a "deck"): pages + per-课文 settings. The
+// shared example/image lexicon now lives on the owning book, not here.
+export function createDeck(title = "课文 1", text = "春天来了") {
+  return {
     id: id("deck"),
     title,
     updatedAt: Date.now(),
@@ -203,16 +212,42 @@ export function createDeck(title = "我的语文讲义") {
       showZdictExamples: false,
       mainFont: "kai"
     },
-    lexicon: {},
     pages: [
-      createPage("第 1 页", "春天来了")
+      createPage("第 1 页", text)
     ]
   };
-  return deck;
+}
+
+// A book owns an ordered list of 课文 and the lexicon shared across them.
+export function createBook(title = "我的课本") {
+  return {
+    id: id("book"),
+    title,
+    updatedAt: Date.now(),
+    lexicon: {},
+    texts: [createDeck()]
+  };
+}
+
+// Every 课文 across every book, flattened. Only 查字 needs this — editing always
+// works against the single active deck.
+export function allTexts() {
+  return state.books.flatMap((book) => book.texts);
+}
+
+export function getActiveBook() {
+  return state.books.find((book) => book.id === state.activeBookId) || state.books[0];
 }
 
 export function getActiveDeck() {
-  return state.decks.find((deck) => deck.id === state.activeDeckId) || state.decks[0];
+  const book = getActiveBook();
+  return book?.texts.find((deck) => deck.id === state.activeDeckId) || book?.texts[0];
+}
+
+// The book that owns a given 课文 (needed to resolve its shared lexicon).
+export function bookOfDeck(deck) {
+  if (!deck) return getActiveBook();
+  return state.books.find((book) => book.texts.some((text) => text.id === deck.id)) || getActiveBook();
 }
 
 export function getActivePage() {
@@ -236,8 +271,24 @@ export function ensureTokenState(token) {
   token.hiddenImages ||= [];
 }
 
-export function ensureDeckModel(deck) {
-  deck.lexicon ||= {};
+export function ensureBookModel(book) {
+  book.lexicon ||= {};
+  book.texts ||= [];
+  book.texts.forEach((deck) => ensureDeckModel(deck, book));
+}
+
+export function ensureDeckModel(deck, book = bookOfDeck(deck)) {
+  book.lexicon ||= {};
+  deck.settings ||= {};
+  deck.settings.showPinyin ??= true;
+  deck.settings.showZdictExamples ??= false;
+  deck.settings.mainFont ||= "kai";
+  // Pre-book saves kept the lexicon on the 课文; fold it into the book's lexicon
+  // so素材 becomes book-wide, then drop the stale per-课文 copy.
+  if (deck.lexicon) {
+    mergeLexicon(book.lexicon, deck.lexicon);
+    delete deck.lexicon;
+  }
   deck.pages.forEach((page) => {
     page.images ||= [];
     page.imageIndex ||= 0;
@@ -253,11 +304,23 @@ export function ensureDeckModel(deck) {
       const token = page.tokens.find((item) => item.text === char);
       const pinyin = token?.pinyin || lookupPinyin(char)[0] || "";
       const key = `${char}|${normalizePinyin(pinyin)}`;
-      deck.lexicon[key] ||= { examples: [], images: [] };
-      mergeSharedItems(deck.lexicon[key].examples, entry.examples, "ex");
-      mergeSharedItems(deck.lexicon[key].images, entry.images, "img");
+      book.lexicon[key] ||= { examples: [], images: [] };
+      mergeSharedItems(book.lexicon[key].examples, entry.examples, "ex");
+      mergeSharedItems(book.lexicon[key].images, entry.images, "img");
     });
     delete page.entries;
+  });
+}
+
+// Merge one lexicon into another by "字|拼音" key, appending items and skipping
+// ones already present by id. Used for the decks→book migration and for
+// importing 课文 into an existing book.
+export function mergeLexicon(target, source = {}) {
+  Object.entries(source).forEach(([key, entry]) => {
+    if (!entry || typeof entry !== "object") return;
+    target[key] ||= { examples: [], images: [] };
+    mergeSharedItems(target[key].examples, entry.examples || [], "ex");
+    mergeSharedItems(target[key].images, entry.images || [], "img");
   });
 }
 
@@ -271,13 +334,13 @@ export function mergeSharedItems(target, source = [], prefix) {
   });
 }
 
-export function getEntry(deck, token) {
+export function getEntry(book, token) {
   if (!token) return null;
   ensureTokenState(token);
-  deck.lexicon ||= {};
+  book.lexicon ||= {};
   const key = entryKey(token);
-  deck.lexicon[key] ||= { examples: [], images: [] };
-  return deck.lexicon[key];
+  book.lexicon[key] ||= { examples: [], images: [] };
+  return book.lexicon[key];
 }
 
 export function visibleExamples(entry, token) {
@@ -304,11 +367,12 @@ export function clampTokenIndex(token, field, length) {
 }
 
 export function activeContext() {
+  const book = getActiveBook();
   const deck = getActiveDeck();
   const page = getActivePage();
   const token = getToken(page);
-  const entry = getEntry(deck, token);
-  return { deck, page, token, entry };
+  const entry = getEntry(book, token);
+  return { book, deck, page, token, entry };
 }
 
 export function clampPageImageIndex(page, length) {
@@ -365,6 +429,7 @@ export function findImageById(imageId) {
 export function closeFloaters() {
   state.ui.menu = null;
   state.ui.pinyinMenu = null;
+  state.ui.bookContext = null;
   state.ui.deckContext = null;
   state.ui.pageContext = null;
 }
@@ -375,6 +440,7 @@ export function clearTransient() {
   state.ui.imageIndex = 0;
   state.ui.menu = null;
   state.ui.pinyinMenu = null;
+  state.ui.bookContext = null;
   state.ui.deckContext = null;
   state.ui.pageContext = null;
   state.ui.pendingExample = false;

@@ -6,7 +6,7 @@
 // Pages (no Office needed) and keeps its formatting when exported to PDF. No DOM
 // access here — the download/print side effects live in events.js.
 
-import { state, lookupRadical, lookupPinyin, isHanzi } from "./core.js";
+import { allTexts, lookupRadical, lookupPinyin, isHanzi } from "./core.js";
 
 // 。！？ (and line breaks) end a sentence; commas / 、；：… only end a clause.
 const SENTENCE_END = "。！？.!?\n";
@@ -44,7 +44,7 @@ function exampleText(clauses, ci) {
 export function radicalsInDecks(deckIds) {
   const ids = new Set(deckIds);
   const byRadical = new Map();
-  state.decks.forEach((deck) => {
+  allTexts().forEach((deck) => {
     if (!ids.has(deck.id)) return;
     deck.pages.forEach((page) => {
       for (const ch of String(page.mainText || "")) {
@@ -70,7 +70,7 @@ export function charsInDecks(deckIds, radicals, sortBy = "freq") {
   const ids = new Set(deckIds);
   const wanted = new Set(radicals);
   const counts = new Map();
-  state.decks.forEach((deck) => {
+  allTexts().forEach((deck) => {
     if (!ids.has(deck.id)) return;
     deck.pages.forEach((page) => {
       for (const ch of String(page.mainText || "")) {
@@ -99,7 +99,7 @@ export function collectMatches(deckIds, chars) {
   const ids = new Set(deckIds);
   const wanted = chars instanceof Set ? chars : new Set(chars);
   const entries = [];
-  state.decks.forEach((deck, deckOrder) => {
+  allTexts().forEach((deck, deckOrder) => {
     if (!ids.has(deck.id)) return;
     deck.pages.forEach((page, pageIndex) => {
       const { cps, clauses, clauseIndexOf } = buildClauses(page.mainText);

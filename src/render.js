@@ -7,6 +7,7 @@ import {
   state,
   colorValue,
   nowLabel,
+  getActiveBook,
   getActiveDeck,
   getActivePage,
   getToken,
@@ -14,7 +15,8 @@ import {
   visibleExamples,
   clampTokenIndex,
   imageContext,
-  lookupZdictMeanings
+  lookupZdictMeanings,
+  allTexts
 } from "./core.js";
 import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, mergeBySentence, headerLine } from "./charquery.js";
 
@@ -62,8 +64,9 @@ export function render() {
   app.innerHTML = `
     <div class="app-shell ${state.ui.chromeCollapsed ? "is-collapsed" : ""}" style="--annotation-color:${colorValue(state.ui.annotationColor || "red")}">
       ${state.ui.chromeCollapsed ? renderCollapsed(page) : renderFullShell(deck, page, { longText })}
-      ${renderDeckPicker()}
+      ${renderNavigator()}
       ${renderContextMenu()}
+      ${renderBookContextMenu()}
       ${renderDeckContextMenu()}
       ${renderPageContextMenu()}
       ${renderPinyinMenu()}
@@ -102,12 +105,13 @@ function renderCollapsed(page) {
 }
 
 function renderFullShell(deck, page, flags) {
+  const book = getActiveBook();
   return `
     <header class="topbar">
       <div class="brand"><strong>语文</strong><span>yǔwén</span></div>
       <div class="toolbar-group">
-        <button data-action="toggle-deck-picker">讲义</button>
-        <span class="active-deck-title" title="${escapeHtml(deck.title)}">${escapeHtml(deck.title)}</span>
+        <button data-action="toggle-deck-picker">课本</button>
+        <span class="active-deck-title" title="${escapeHtml(book.title)} › ${escapeHtml(deck.title)}">${escapeHtml(book.title)}<span class="crumb-sep">›</span>${escapeHtml(deck.title)}</span>
         <button title="按部首查字并导出" data-action="open-charquery">查字</button>
       </div>
       <div class="toolbar-group">
@@ -142,11 +146,47 @@ function renderFullShell(deck, page, flags) {
   `;
 }
 
-function renderDeckItem(deck) {
+// Two-level 课本 → 课文 navigator. The active book is always expanded; other
+// books can be toggled open. Opening a 课文 switches the single active deck.
+function renderNavigator() {
+  if (!state.ui.deckPickerOpen || state.ui.chromeCollapsed) return "";
   return `
-    <button class="deck-item ${deck.id === state.activeDeckId ? "is-active" : ""}" data-deck-id="${deck.id}">
+    <div class="deck-popover nav-popover">
+      <div class="deck-popover-head">
+        <span>课本</span>
+        <span class="deck-popover-actions">
+          <button title="导入课本 / 课文 (JSON)" data-action="import-deck">导入</button>
+          <button title="新建课本" data-action="new-book">新建书</button>
+        </span>
+      </div>
+      <div class="nav-list">
+        ${state.books.map(renderBookGroup).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderBookGroup(book) {
+  const expanded = book.id === state.activeBookId || (state.ui.expandedBookIds || []).includes(book.id);
+  return `
+    <div class="nav-book ${book.id === state.activeBookId ? "is-active-book" : ""}">
+      <div class="nav-book-head" data-action="toggle-book" data-book-id="${book.id}" role="button" tabindex="0">
+        <span class="nav-twisty">${expanded ? "▾" : "▸"}</span>
+        <span class="nav-book-title" title="${escapeHtml(book.title)}">${escapeHtml(book.title)}</span>
+        <span class="deck-meta">${book.texts.length} 课</span>
+        <button class="nav-add" title="在本书新建课文" data-action="new-deck" data-book-id="${book.id}">＋</button>
+      </div>
+      ${expanded ? `<div class="nav-texts">${book.texts.map((deck) => renderNavText(book, deck)).join("")}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderNavText(book, deck) {
+  const active = deck.id === state.activeDeckId && book.id === state.activeBookId;
+  return `
+    <button class="deck-item nav-text ${active ? "is-active" : ""}" data-deck-id="${deck.id}" data-book-id="${book.id}">
       <span class="deck-title">${escapeHtml(deck.title)}</span>
-      <span class="deck-meta">${deck.pages.length} 页 · ${nowLabel(deck.updatedAt)}</span>
+      <span class="deck-meta">${deck.pages.length} 页</span>
     </button>
   `;
 }
@@ -161,24 +201,6 @@ function renderPageItem(page, index) {
     <div class="page-item ${active} ${selected}" data-page-id="${page.id}" role="button" tabindex="0" draggable="true">
       <span class="page-number">${index + 1}</span>
       <span class="page-preview">${escapeHtml(page.mainText || "空白页面")}</span>
-    </div>
-  `;
-}
-
-function renderDeckPicker() {
-  if (!state.ui.deckPickerOpen || state.ui.chromeCollapsed) return "";
-  return `
-    <div class="deck-popover">
-      <div class="deck-popover-head">
-        <span>讲义</span>
-        <span class="deck-popover-actions">
-          <button title="从 JSON 文件导入讲义" data-action="import-deck">导入</button>
-          <button title="新建讲义" data-action="new-deck">新增</button>
-        </span>
-      </div>
-      <div class="deck-list">
-        ${state.decks.map(renderDeckItem).join("")}
-      </div>
     </div>
   `;
 }
@@ -364,14 +386,24 @@ function renderContextMenu() {
   `;
 }
 
+function renderBookContextMenu() {
+  if (!state.ui.bookContext) return "";
+  return `
+    <div class="context-menu" style="left:${state.ui.bookContext.x}px;top:${state.ui.bookContext.y}px">
+      <button class="menu-item" data-action="new-deck">新建课文</button>
+      <button class="menu-item" data-action="rename-book">重命名课本</button>
+      <button class="menu-item" data-action="delete-book">删除课本</button>
+    </div>
+  `;
+}
+
 function renderDeckContextMenu() {
   if (!state.ui.deckContext) return "";
   return `
     <div class="context-menu" style="left:${state.ui.deckContext.x}px;top:${state.ui.deckContext.y}px">
-      <button class="menu-item" data-action="rename-deck">重命名</button>
-      <button class="menu-item" data-action="copy-deck">复制</button>
-      <button class="menu-item" data-action="export-deck">导出</button>
-      <button class="menu-item" data-action="delete-deck">删除</button>
+      <button class="menu-item" data-action="rename-deck">重命名课文</button>
+      <button class="menu-item" data-action="copy-deck">复制课文</button>
+      <button class="menu-item" data-action="delete-deck">删除课文</button>
     </div>
   `;
 }
@@ -400,7 +432,7 @@ function renderCharQuery() {
   const query = state.ui.query;
   if (!query?.open) return "";
 
-  const stepLabel = { 1: "①选择讲义", 2: "②选择部首", 3: "③选择单字", 4: "④预览导出" }[query.step];
+  const stepLabel = { 1: "①选择课文", 2: "②选择部首", 3: "③选择单字", 4: "④预览导出" }[query.step];
   return `
     <div class="cq-overlay">
       <div class="cq-dialog">
@@ -416,18 +448,21 @@ function renderCharQuery() {
 
 function renderCharQueryStep(query) {
   if (query.step === 1) {
-    const allSelected = query.deckIds.length === state.decks.length && state.decks.length > 0;
+    const texts = allTexts();
+    const bookTitleByDeck = new Map();
+    state.books.forEach((book) => book.texts.forEach((deck) => bookTitleByDeck.set(deck.id, book.title)));
+    const allSelected = query.deckIds.length === texts.length && texts.length > 0;
     return `
       <div class="cq-toolbar">
         <button data-action="charquery-decks-all">${allSelected ? "全不选" : "全选"}</button>
-        <span class="cq-dim">已选 ${query.deckIds.length} / ${state.decks.length} 册（可 Shift 点击选区间）</span>
+        <span class="cq-dim">已选 ${query.deckIds.length} / ${texts.length} 篇课文（可 Shift 点击选区间）</span>
       </div>
       <div class="cq-list">
-        ${state.decks.map((deck, index) => `
+        ${texts.map((deck, index) => `
           <button class="cq-row ${query.deckIds.includes(deck.id) ? "is-sel" : ""}" data-action="charquery-deck" data-index="${index}" data-deck-id="${deck.id}">
             <span class="cq-check">${query.deckIds.includes(deck.id) ? "☑" : "☐"}</span>
             <span class="cq-row-title">${escapeHtml(deck.title)}</span>
-            <span class="cq-dim">${deck.pages.length} 页</span>
+            <span class="cq-dim">${escapeHtml(bookTitleByDeck.get(deck.id) || "")} · ${deck.pages.length} 页</span>
           </button>
         `).join("")}
       </div>
