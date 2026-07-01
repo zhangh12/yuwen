@@ -49,6 +49,8 @@ export const state = {
     deckContext: null,
     pageContext: null,
     draggedPageId: "",
+    selectedPageIds: [],
+    pageAnchorId: "",
     pendingExample: false,
     pendingImage: false,
     editingExampleId: "",
@@ -382,4 +384,6 @@ export function clearTransient() {
   state.ui.editingMain = false;
   state.ui.annotating = false;
   state.ui.annotationOriginalColors = {};
+  state.ui.selectedPageIds = [];
+  state.ui.pageAnchorId = "";
 }

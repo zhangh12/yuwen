@@ -107,8 +107,18 @@ function onAppClick(event) {
 
   const pageEl = el.closest("[data-page-id]");
   if (pageEl) {
-    state.activePageId = pageEl.dataset.pageId;
+    const pageId = pageEl.dataset.pageId;
+    const toggle = event.metaKey || event.ctrlKey;
+    if (toggle || event.shiftKey) {
+      // Extend/toggle the page multi-selection; keep any open floaters closed.
+      closeFloaters();
+      selectPage(pageId, { shift: event.shiftKey, toggle });
+      saveState();
+      render();
+      return;
+    }
     clearTransient();
+    selectPage(pageId, {});
     saveState();
     render();
     return;
@@ -155,7 +165,15 @@ function onAppContextMenu(event) {
   const pageEl = el.closest("[data-page-id]");
   if (pageEl) {
     event.preventDefault();
-    state.ui.pageContext = { x: event.clientX, y: event.clientY, pageId: pageEl.dataset.pageId };
+    const pageId = pageEl.dataset.pageId;
+    // Right-clicking a page outside the current selection collapses it to just
+    // that page (Finder / PowerPoint behaviour); right-clicking inside a
+    // multi-selection keeps the whole selection so it can be batch-deleted.
+    if (!currentPageSelection().includes(pageId)) {
+      clearTransient();
+      selectPage(pageId, {});
+    }
+    state.ui.pageContext = { x: event.clientX, y: event.clientY, pageId };
     state.ui.deckContext = null;
     state.ui.menu = null;
     state.ui.pinyinMenu = null;
@@ -276,6 +294,7 @@ function handleAction(target, event) {
   if (action === "new-page") return newPage();
   if (action === "copy-page") return copyPage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "delete-page") return deletePage(target.dataset.pageId || state.ui.pageContext?.pageId);
+  if (action === "delete-pages") return deletePages();
   if (action === "export-deck") return exportSelectedDeck();
   if (action === "import-deck") return importDecksFlow();
   if (action === "import-pages") return importPagesFlow();
@@ -876,6 +895,8 @@ function copyPage(pageId = state.activePageId) {
   state.ui.editingExampleId = "";
   state.ui.editingCaptionId = "";
   state.ui.editingMain = false;
+  state.ui.selectedPageIds = [];
+  state.ui.pageAnchorId = "";
   touchDeck(deck);
   saveState();
   render();
@@ -896,6 +917,67 @@ function deletePage(pageId = state.activePageId) {
   state.ui.pageContext = null;
   state.ui.deckContext = null;
   state.ui.menu = null;
+  touchDeck(deck);
+  render();
+}
+
+// The current page multi-selection, restricted to pages that still exist. Falls
+// back to the single active page when nothing is explicitly selected.
+function currentPageSelection() {
+  const deck = getActiveDeck();
+  const existing = (state.ui.selectedPageIds || []).filter((pid) => deck.pages.some((page) => page.id === pid));
+  if (existing.length) return existing;
+  return state.activePageId ? [state.activePageId] : [];
+}
+
+// Update the page multi-selection from a click. `shift` selects the contiguous
+// range from the anchor to the clicked page; `toggle` (Cmd/Ctrl) adds or removes
+// a single page; a plain click selects just that page. The selection is always
+// kept in page order, is never empty, and the clicked page becomes the shown one.
+function selectPage(pageId, { shift = false, toggle = false } = {}) {
+  const deck = getActiveDeck();
+  const order = deck.pages.map((page) => page.id);
+  let selected;
+  if (shift) {
+    const anchorId = state.ui.pageAnchorId && order.includes(state.ui.pageAnchorId)
+      ? state.ui.pageAnchorId
+      : state.activePageId;
+    const a = order.indexOf(anchorId);
+    const b = order.indexOf(pageId);
+    selected = a >= 0 && b >= 0 ? order.slice(Math.min(a, b), Math.max(a, b) + 1) : [pageId];
+  } else if (toggle) {
+    const current = currentPageSelection();
+    selected = current.includes(pageId) ? current.filter((pid) => pid !== pageId) : [...current, pageId];
+    if (!selected.length) selected = [pageId];
+    state.ui.pageAnchorId = pageId;
+  } else {
+    selected = [pageId];
+    state.ui.pageAnchorId = pageId;
+  }
+  state.ui.selectedPageIds = order.filter((pid) => selected.includes(pid));
+  state.activePageId = state.ui.selectedPageIds.includes(pageId)
+    ? pageId
+    : state.ui.selectedPageIds[state.ui.selectedPageIds.length - 1] || pageId;
+}
+
+// Delete every page in the current multi-selection at once (right-click on a
+// selection of 2+). Keeps at least one page in the deck and, after deleting,
+// selects the page nearest the removed block.
+function deletePages() {
+  const deck = getActiveDeck();
+  const selected = currentPageSelection().filter((pid) => deck.pages.some((page) => page.id === pid));
+  if (selected.length < 2) return deletePage(state.ui.pageContext?.pageId);
+  if (selected.length >= deck.pages.length) {
+    window.alert("不能删除讲义中的全部页面，至少保留一页。");
+    return;
+  }
+  if (!window.confirm(`删除选中的 ${selected.length} 个页面？`)) return;
+  const firstIndex = deck.pages.findIndex((page) => selected.includes(page.id));
+  const removing = new Set(selected);
+  deck.pages = deck.pages.filter((page) => !removing.has(page.id));
+  state.activePageId = deck.pages[Math.min(firstIndex, deck.pages.length - 1)].id;
+  clearTransient();
+  state.ui.pageContext = null;
   touchDeck(deck);
   render();
 }

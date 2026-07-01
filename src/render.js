@@ -152,8 +152,13 @@ function renderDeckItem(deck) {
 }
 
 function renderPageItem(page, index) {
+  const selectedIds = state.ui.selectedPageIds || [];
+  // Only show the multi-select ring when 2+ pages are selected, so a normal
+  // single selection still reads as just the active page.
+  const selected = selectedIds.length > 1 && selectedIds.includes(page.id) ? "is-selected" : "";
+  const active = page.id === state.activePageId ? "is-active" : "";
   return `
-    <div class="page-item ${page.id === state.activePageId ? "is-active" : ""}" data-page-id="${page.id}" role="button" tabindex="0" draggable="true">
+    <div class="page-item ${active} ${selected}" data-page-id="${page.id}" role="button" tabindex="0" draggable="true">
       <span class="page-number">${index + 1}</span>
       <span class="page-preview">${escapeHtml(page.mainText || "空白页面")}</span>
     </div>
@@ -373,6 +378,16 @@ function renderDeckContextMenu() {
 
 function renderPageContextMenu() {
   if (!state.ui.pageContext) return "";
+  const selectedIds = state.ui.selectedPageIds || [];
+  // When 2+ pages are selected and the right-click landed on one of them, offer
+  // a single batch-delete action instead of the per-page menu.
+  if (selectedIds.length > 1 && selectedIds.includes(state.ui.pageContext.pageId)) {
+    return `
+      <div class="context-menu" style="left:${state.ui.pageContext.x}px;top:${state.ui.pageContext.y}px">
+        <button class="menu-item" data-action="delete-pages">删除选中的 ${selectedIds.length} 个页面</button>
+      </div>
+    `;
+  }
   return `
     <div class="context-menu" style="left:${state.ui.pageContext.x}px;top:${state.ui.pageContext.y}px">
       <button class="menu-item" data-action="copy-page" data-page-id="${state.ui.pageContext.pageId}">复制页面</button>

@@ -244,6 +244,12 @@ input:focus {
   background: #fffdf8;
 }
 
+/* Multi-selected pages (Shift / Cmd-Ctrl click) get an accent ring; the active
+   page among them keeps its brighter background so it still reads as "current". */
+.page-item.is-selected {
+  box-shadow: inset 0 0 0 1.5px rgba(155, 47, 38, 0.5);
+}
+
 .deck-title {
   display: block;
   overflow: hidden;
