@@ -183,7 +183,7 @@ function renderLesson(page, { longText }) {
     return `
       <section class="lesson-page text-only-page">
         <div class="lesson-grid text-only-grid" style="--main-color:${colorValue(page.styles.mainTextColor)};--main-scale:${page.mainTextScale}">
-          ${renderMainZone(page, true)}
+          ${renderMainZone(page, longText)}
         </div>
       </section>
     `;

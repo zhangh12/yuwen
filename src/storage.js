@@ -208,6 +208,40 @@ function appendImportedDecks(stored) {
 
 // Import a "yuwen-pages" file: append each page to the CURRENT deck. yuwen
 // re-derives pinyin via createPage. Returns the number of pages added.
+// 只把停顿/句末标点算作"标点"（不含引号、书名号等）。
+const STOP_PUNCT = "，。！？；：、…";
+
+// 诗词：至少两行，且所有行「恰好 1 标点且 ≤8 字符」（七绝），
+// 或所有行「恰好 2 标点且 ≤16 字符」（两句）。
+function isPoem(text) {
+  const lines = String(text).split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 2) return false;
+  const info = lines.map((l) => ({
+    len: [...l].length,
+    punct: [...l].filter((c) => STOP_PUNCT.includes(c)).length
+  }));
+  const allA = info.every((x) => x.punct === 1 && x.len <= 8);
+  const allB = info.every((x) => x.punct === 2 && x.len <= 16);
+  return allA || allB;
+}
+
+// 导入时定字号与是否全文页。字号只用两种：0.7（最小）与 0.9。
+// 全页判定：最小字号(0.7)下普通页主文区放不下 → 全文页。
+// 字号：全页一律最小字号 0.7；留在普通页的诗词用 0.9，其余用 0.7。
+function autoLayout(text) {
+  const paras = String(text).split("\n").map((line) => [...line].length);
+  // 普通页主文区：宽约 430px（最小字号下约 16 字/行），高约 390px，行高含拼音
+  const fitsNormal = (scale) => {
+    const charsPerLine = Math.max(1, Math.floor(430 / (38 * scale)));
+    const lineCap = Math.floor(390 / (90 * scale));
+    const linesNeeded = paras.reduce((sum, n) => sum + Math.max(1, Math.ceil(n / charsPerLine)), 0);
+    return linesNeeded <= lineCap;
+  };
+  const textOnly = !fitsNormal(0.7);
+  const mainTextScale = textOnly ? 0.7 : (isPoem(text) ? 0.9 : 0.7);
+  return { mainTextScale, textOnly };
+}
+
 export async function importPages(file) {
   const text = await file.text();
   let parsed;
@@ -226,7 +260,11 @@ export async function importPages(file) {
     const title = (typeof page.title === "string" && page.title.trim())
       || body.trim().replace(/\s+/g, " ").slice(0, 12)
       || "新页面";
-    return createPage(title, body);
+    const made = createPage(title, body);
+    const layout = autoLayout(body);
+    made.mainTextScale = layout.mainTextScale;
+    made.textOnly = layout.textOnly;
+    return made;
   });
   if (!created.length) throw new Error("文件中没有页面。");
   deck.pages.push(...created);

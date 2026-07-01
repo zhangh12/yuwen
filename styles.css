@@ -360,7 +360,8 @@ input:focus {
 .lesson-grid {
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1.02fr) minmax(300px, 0.78fr);
+  /* 左侧主文区宽度≈最小字号下 16 字一行的右边界（可微调）；右侧图片区取其余 */
+  grid-template-columns: minmax(0, 590px) minmax(260px, 1fr);
   grid-template-rows: minmax(0, 1fr) 178px;
 }
 
@@ -396,7 +397,8 @@ input:focus {
   width: 100%;
   color: var(--main-color, var(--ink));
   font-family: var(--hanzi-font);
-  font-size: calc(70px * var(--main-scale, 1));
+  /* 单一字号基准：A-/A0/A+ 直接控制实际字号，与是否长文无关 */
+  font-size: calc(38px * var(--main-scale, 1));
   line-height: 1.48;
   letter-spacing: 0;
   text-align: center;
@@ -405,7 +407,6 @@ input:focus {
 .main-zone.is-long-text .main-text {
   max-width: 860px;
   margin: 0 auto;
-  font-size: calc(38px * var(--main-scale, 1));
   line-height: 1.86;
   text-align: left;
 }
