@@ -451,23 +451,40 @@ function renderCharQuery() {
 
 function renderCharQueryStep(query) {
   if (query.step === 1) {
-    const texts = allTexts();
-    const bookTitleByDeck = new Map();
-    state.books.forEach((book) => book.texts.forEach((deck) => bookTitleByDeck.set(deck.id, book.title)));
-    const allSelected = query.deckIds.length === texts.length && texts.length > 0;
+    const total = allTexts().length;
+    const selected = new Set(query.deckIds || []);
+    const expanded = new Set(query.expandedBooks || []);
+    const allSelected = total > 0 && query.deckIds.length === total;
     return `
       <div class="cq-toolbar">
         <button data-action="charquery-decks-all">${allSelected ? "全不选" : "全选"}</button>
-        <span class="cq-dim">已选 ${query.deckIds.length} / ${texts.length} 篇课文（可 Shift 点击选区间）</span>
+        <span class="cq-dim">已选 ${query.deckIds.length} / ${total} 篇课文（勾课本＝选整本）</span>
       </div>
-      <div class="cq-list">
-        ${texts.map((deck, index) => `
-          <button class="cq-row ${query.deckIds.includes(deck.id) ? "is-sel" : ""}" data-action="charquery-deck" data-index="${index}" data-deck-id="${deck.id}">
-            <span class="cq-check">${query.deckIds.includes(deck.id) ? "☑" : "☐"}</span>
-            <span class="cq-row-title">${escapeHtml(deck.title)}</span>
-            <span class="cq-dim">${escapeHtml(bookTitleByDeck.get(deck.id) || "")} · ${deck.pages.length} 页</span>
-          </button>
-        `).join("")}
+      <div class="cq-list cq-tree">
+        ${state.books.map((book) => {
+          const selCount = book.texts.filter((deck) => selected.has(deck.id)).length;
+          const mark = selCount === 0 ? "☐" : (selCount === book.texts.length ? "☑" : "▣");
+          const isOpen = expanded.has(book.id);
+          return `
+            <div class="cq-book">
+              <div class="cq-row cq-book-row">
+                <button class="cq-check-btn" data-action="charquery-book-sel" data-book-id="${book.id}" aria-label="选择整本课本">${mark}</button>
+                <button class="cq-book-open" data-action="charquery-book-expand" data-book-id="${book.id}">
+                  <span class="cq-twisty">${isOpen ? "▾" : "▸"}</span>
+                  <span class="cq-row-title">${escapeHtml(book.title)}</span>
+                  <span class="cq-dim">${selCount}/${book.texts.length} 课</span>
+                </button>
+              </div>
+              ${isOpen ? `<div class="cq-texts">${book.texts.map((deck) => `
+                <button class="cq-row cq-text-row ${selected.has(deck.id) ? "is-sel" : ""}" data-action="charquery-deck" data-deck-id="${deck.id}">
+                  <span class="cq-check">${selected.has(deck.id) ? "☑" : "☐"}</span>
+                  <span class="cq-row-title">${escapeHtml(deck.title)}</span>
+                  <span class="cq-dim">${deck.pages.length} 页</span>
+                </button>
+              `).join("")}</div>` : ""}
+            </div>
+          `;
+        }).join("")}
       </div>
       <div class="cq-foot">
         <span></span>

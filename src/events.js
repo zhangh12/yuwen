@@ -325,7 +325,9 @@ function handleAction(target, event) {
   if (action === "open-charquery") return openCharQuery();
   if (action === "charquery-close") { state.ui.query = null; return render(); }
   if (action === "charquery-decks-all") { toggleAllQueryDecks(); return render(); }
-  if (action === "charquery-deck") { selectQueryDeck(Number(target.dataset.index), target.dataset.deckId, event.shiftKey); return render(); }
+  if (action === "charquery-deck") { toggleQueryDeckSel(target.dataset.deckId); return render(); }
+  if (action === "charquery-book-sel") { toggleQueryBook(target.dataset.bookId); return render(); }
+  if (action === "charquery-book-expand") { toggleQueryBookExpand(target.dataset.bookId); return render(); }
   if (action === "charquery-next") { state.ui.query.step = 2; return render(); }
   if (action === "charquery-back") { state.ui.query.step = Math.max(1, state.ui.query.step - 1); return render(); }
   if (action === "charquery-radical") { toggleQueryRadical(target.dataset.radical); return render(); }
@@ -1241,7 +1243,7 @@ function openCharQuery() {
     open: true,
     step: 1,
     deckIds: allTexts().map((deck) => deck.id),
-    lastDeckIndex: -1,
+    expandedBooks: state.books.map((book) => book.id),
     radicals: [],
     chars: [],
     charSort: "freq",
@@ -1251,26 +1253,40 @@ function openCharQuery() {
   render();
 }
 
+// Keep query.deckIds ordered like allTexts() so downstream steps stay stable.
+function setQueryDeckIds(idSet) {
+  state.ui.query.deckIds = allTexts().map((deck) => deck.id).filter((id) => idSet.has(id));
+}
+
 function toggleAllQueryDecks() {
   const query = state.ui.query;
   const texts = allTexts();
   query.deckIds = query.deckIds.length === texts.length ? [] : texts.map((deck) => deck.id);
 }
 
-function selectQueryDeck(index, deckId, shiftKey) {
+function toggleQueryDeckSel(deckId) {
+  const ids = new Set(state.ui.query.deckIds);
+  if (ids.has(deckId)) ids.delete(deckId); else ids.add(deckId);
+  setQueryDeckIds(ids);
+}
+
+// Book checkbox: select the whole book when not all its 课文 are selected, else
+// clear them all.
+function toggleQueryBook(bookId) {
+  const book = state.books.find((item) => item.id === bookId);
+  if (!book) return;
+  const ids = new Set(state.ui.query.deckIds);
+  const allOn = book.texts.every((deck) => ids.has(deck.id));
+  book.texts.forEach((deck) => (allOn ? ids.delete(deck.id) : ids.add(deck.id)));
+  setQueryDeckIds(ids);
+}
+
+function toggleQueryBookExpand(bookId) {
   const query = state.ui.query;
-  const texts = allTexts();
-  const ids = new Set(query.deckIds);
-  if (shiftKey && query.lastDeckIndex >= 0) {
-    const [from, to] = [query.lastDeckIndex, index].sort((a, b) => a - b);
-    for (let i = from; i <= to; i++) ids.add(texts[i].id);
-  } else if (ids.has(deckId)) {
-    ids.delete(deckId);
-  } else {
-    ids.add(deckId);
-  }
-  query.deckIds = texts.filter((deck) => ids.has(deck.id)).map((deck) => deck.id);
-  query.lastDeckIndex = index;
+  query.expandedBooks ||= [];
+  const at = query.expandedBooks.indexOf(bookId);
+  if (at >= 0) query.expandedBooks.splice(at, 1);
+  else query.expandedBooks.push(bookId);
 }
 
 function toggleQueryRadical(radical) {
