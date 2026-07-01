@@ -100,6 +100,8 @@ function applyLoadedState(stored) {
     book.texts.forEach((deck) => deck.pages.forEach(tokenizePage));
     ensureBookModel(book);
   });
+  // Start with the active book expanded in the navigator (still user-collapsible).
+  state.ui.expandedBookIds = state.activeBookId ? [state.activeBookId] : [];
 }
 
 export function saveState() {
@@ -150,6 +152,7 @@ export async function loadState() {
   state.activeBookId = book.id;
   state.activeDeckId = book.texts[0].id;
   state.activePageId = book.texts[0].pages[0].id;
+  state.ui.expandedBookIds = [book.id];
   saveState();
 }
 

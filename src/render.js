@@ -155,7 +155,7 @@ function renderNavigator() {
       <div class="deck-popover-head">
         <span>课本</span>
         <span class="deck-popover-actions">
-          <button title="导入课本 / 课文 (JSON)" data-action="import-deck">导入</button>
+          <!-- 「导入」(备份读回) 暂缓到第 ④ 期，避免占位实现误导 -->
           <button title="新建课本" data-action="new-book">新建书</button>
         </span>
       </div>
@@ -167,7 +167,10 @@ function renderNavigator() {
 }
 
 function renderBookGroup(book) {
-  const expanded = book.id === state.activeBookId || (state.ui.expandedBookIds || []).includes(book.id);
+  // Expansion is driven purely by expandedBookIds so every book — including the
+  // active one — can be collapsed. The active book is seeded into that list when
+  // it becomes active (see expandBook), so it still opens by default.
+  const expanded = (state.ui.expandedBookIds || []).includes(book.id);
   return `
     <div class="nav-book ${book.id === state.activeBookId ? "is-active-book" : ""}">
       <div class="nav-book-head" data-action="toggle-book" data-book-id="${book.id}" role="button" tabindex="0">

@@ -104,6 +104,7 @@ function onAppClick(event) {
     state.activeDeckId = deckEl.dataset.deckId;
     state.activePageId = getActiveDeck()?.pages[0]?.id || "";
     clearTransient();
+    expandBook(state.activeBookId);
     state.ui.deckPickerOpen = false;
     saveState();
     render();
@@ -847,6 +848,7 @@ function newBook() {
   state.activeDeckId = book.texts[0].id;
   state.activePageId = book.texts[0].pages[0].id;
   clearTransient();
+  expandBook(book.id);
   state.ui.deckPickerOpen = true;
   saveState();
   render();
@@ -859,6 +861,14 @@ function toggleBook(bookId) {
   if (at >= 0) state.ui.expandedBookIds.splice(at, 1);
   else state.ui.expandedBookIds.push(bookId);
   render();
+}
+
+// Make sure a book is expanded in the navigator (called when it becomes active).
+// A book collapsed by the user stays collapsed until it becomes active again.
+function expandBook(bookId) {
+  if (!bookId) return;
+  state.ui.expandedBookIds ||= [];
+  if (!state.ui.expandedBookIds.includes(bookId)) state.ui.expandedBookIds.push(bookId);
 }
 
 function renameBook(bookId = state.activeBookId) {
@@ -886,6 +896,7 @@ function deleteBook(bookId = state.activeBookId) {
     state.activePageId = first.texts[0].pages[0].id;
   }
   clearTransient();
+  expandBook(state.activeBookId);
   saveState();
   render();
 }
@@ -903,6 +914,7 @@ function newDeck(bookId = state.activeBookId) {
   state.activeDeckId = deck.id;
   state.activePageId = deck.pages[0].id;
   clearTransient();
+  expandBook(book.id);
   state.ui.deckPickerOpen = true;
   saveState();
   render();
@@ -936,6 +948,7 @@ function copyDeck(deckId = state.activeDeckId) {
   state.activeDeckId = deck.id;
   state.activePageId = deck.pages[0].id;
   clearTransient();
+  expandBook(book.id);
   state.ui.deckPickerOpen = true;
   saveState();
   render();
@@ -955,6 +968,7 @@ function deleteDeck(deckId = state.activeDeckId) {
     state.activePageId = next.pages[0].id;
   }
   clearTransient();
+  expandBook(state.activeBookId);
   saveState();
   render();
 }
