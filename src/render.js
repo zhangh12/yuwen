@@ -155,7 +155,7 @@ function renderNavigator() {
       <div class="deck-popover-head">
         <span>课本</span>
         <span class="deck-popover-actions">
-          <!-- 「导入」(备份读回) 暂缓到第 ④ 期，避免占位实现误导 -->
+          <button title="导入课本 / 课文 (JSON)" data-action="import-deck">导入</button>
           <button title="新建课本" data-action="new-book">新建书</button>
         </span>
       </div>
