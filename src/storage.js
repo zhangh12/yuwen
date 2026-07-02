@@ -217,6 +217,68 @@ export function exportDeck(deck) {
   URL.revokeObjectURL(url);
 }
 
+// --- 备份（Backup export）--------------------------------------------------
+//
+// One backup file = exactly one book. A whole-book backup carries the book's
+// full lexicon; a partial (subset of 课文) backup carries only the lexicon
+// entries those 课文 actually reference. Selecting 课文 across N books produces
+// N separate downloads (there is no cross-book lexicon, so they can't share one
+// file).
+
+function downloadJson(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function backupFilename(title) {
+  const safe = String(title || "课本").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 40);
+  return `yuwen-${safe}-${new Date().toISOString().slice(0, 10)}.json`;
+}
+
+// The slice of a book's lexicon referenced by the given 课文 (by 字|拼音 key).
+function referencedLexicon(book, texts) {
+  const keys = new Set();
+  texts.forEach((deck) => deck.pages?.forEach((page) => page.tokens?.forEach((token) => {
+    keys.add(`${token.text}|${(token.pinyin || "").trim()}`);
+  })));
+  const lexicon = {};
+  Object.entries(book.lexicon || {}).forEach(([key, entry]) => {
+    if (keys.has(key)) lexicon[key] = entry;
+  });
+  return lexicon;
+}
+
+function buildBookEnvelope(book, texts) {
+  const wholeBook = texts.length === book.texts.length;
+  const lexicon = wholeBook ? (book.lexicon || {}) : referencedLexicon(book, texts);
+  return deepClone({
+    format: "yuwen-backup",
+    version: 2,
+    book: { title: book.title, lexicon, texts }
+  });
+}
+
+// Back up the books that own any of the selected 课文, one JSON file each.
+// Returns the number of files produced.
+export function exportBackup(deckIds) {
+  const wanted = new Set(deckIds);
+  let files = 0;
+  state.books.forEach((book) => {
+    const texts = book.texts.filter((deck) => wanted.has(deck.id));
+    if (!texts.length) return;
+    downloadJson(buildBookEnvelope(book, texts), backupFilename(book.title));
+    files += 1;
+  });
+  return files;
+}
+
 // Append imported decks as new decks (with fresh ids) so importing never
 // overwrites the existing library. Returns the first imported deck.
 // Phase ① placeholder: import a legacy backup ({decks:[…]}) as one new book.

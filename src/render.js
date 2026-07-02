@@ -71,6 +71,7 @@ export function render() {
       ${renderPageContextMenu()}
       ${renderPinyinMenu()}
       ${renderCharQuery()}
+      ${renderBackup()}
     </div>
   `;
 
@@ -155,6 +156,7 @@ function renderNavigator() {
       <div class="deck-popover-head">
         <span>课本</span>
         <span class="deck-popover-actions">
+          <button title="备份课本为 JSON" data-action="open-backup">备份</button>
           <button title="导入课本 / 课文 (JSON)" data-action="import-deck">导入</button>
           <button title="新建课本" data-action="new-book">新建书</button>
         </span>
@@ -566,6 +568,64 @@ function renderCharQueryStep(query) {
         <button data-action="charquery-export-word" ${total ? "" : "disabled"}>导出 Word</button>
         <button class="cq-primary" data-action="charquery-export-zitie" ${uniqueCount ? "" : "disabled"}>导出字帖</button>
       </span>
+    </div>
+  `;
+}
+
+function renderBackup() {
+  const backup = state.ui.backup;
+  if (!backup?.open) return "";
+  const total = allTexts().length;
+  const selected = new Set(backup.deckIds || []);
+  const expanded = new Set(backup.expandedBooks || []);
+  const bookCount = state.books.filter((book) => book.texts.some((deck) => selected.has(deck.id))).length;
+  const allSelected = total > 0 && backup.deckIds.length === total;
+  return `
+    <div class="cq-overlay">
+      <div class="cq-dialog">
+        <div class="cq-head">
+          <span>备份 · 导出 JSON</span>
+          <button class="cq-x" data-action="backup-close" aria-label="关闭">×</button>
+        </div>
+        <div class="cq-body">
+          <div class="cq-toolbar">
+            <button data-action="backup-all">${allSelected ? "全不选" : "全选"}</button>
+            <span class="cq-dim">勾要备份的课本 / 课文（勾课本＝整本）· 已选 ${backup.deckIds.length}/${total} 篇 · ${bookCount} 本各存一个文件</span>
+          </div>
+          <div class="cq-list cq-tree">
+            ${state.books.map((book) => renderBackupBook(book, selected, expanded)).join("")}
+          </div>
+          <div class="cq-foot">
+            <span class="cq-dim">多本课本＝多个文件（浏览器会提示允许多文件下载）</span>
+            <button class="cq-primary" data-action="backup-run" ${backup.deckIds.length ? "" : "disabled"}>备份${bookCount ? `（${bookCount} 个文件）` : ""}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderBackupBook(book, selected, expanded) {
+  const selCount = book.texts.filter((deck) => selected.has(deck.id)).length;
+  const mark = selCount === 0 ? "☐" : (selCount === book.texts.length ? "☑" : "▣");
+  const isOpen = expanded.has(book.id);
+  return `
+    <div class="cq-book">
+      <div class="cq-row cq-book-row">
+        <button class="cq-check-btn" data-action="backup-book-sel" data-book-id="${book.id}" aria-label="选择整本课本">${mark}</button>
+        <button class="cq-book-open" data-action="backup-book-expand" data-book-id="${book.id}">
+          <span class="cq-twisty">${isOpen ? "▾" : "▸"}</span>
+          <span class="cq-row-title">${escapeHtml(book.title)}</span>
+          <span class="cq-dim">${selCount}/${book.texts.length} 课</span>
+        </button>
+      </div>
+      ${isOpen ? `<div class="cq-texts">${book.texts.map((deck) => `
+        <button class="cq-row cq-text-row ${selected.has(deck.id) ? "is-sel" : ""}" data-action="backup-deck" data-deck-id="${deck.id}">
+          <span class="cq-check">${selected.has(deck.id) ? "☑" : "☐"}</span>
+          <span class="cq-row-title">${escapeHtml(deck.title)}</span>
+          <span class="cq-dim">${deck.pages.length} 页</span>
+        </button>
+      `).join("")}</div>` : ""}
     </div>
   `;
 }

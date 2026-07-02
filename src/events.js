@@ -31,7 +31,7 @@ import {
   id
 } from "./core.js";
 import { render, app } from "./render.js";
-import { saveState, touchDeck, exportDeck, importData, importPages } from "./storage.js";
+import { saveState, touchDeck, exportDeck, exportBackup, importData, importPages } from "./storage.js";
 import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, buildDocx, buildPrintHtml } from "./charquery.js";
 import { fetchStrokes, buildZitieHtml } from "./zitie.js";
 
@@ -132,6 +132,7 @@ function onAppClick(event) {
 
   if (el.matches(".cq-overlay")) {
     state.ui.query = null;
+    state.ui.backup = null;
     render();
     return;
   }
@@ -321,6 +322,14 @@ function handleAction(target, event) {
   if (action === "export-deck") return exportSelectedDeck();
   if (action === "import-deck") return importDecksFlow();
   if (action === "import-pages") return importPagesFlow();
+
+  if (action === "open-backup") return openBackup();
+  if (action === "backup-close") { state.ui.backup = null; return render(); }
+  if (action === "backup-all") { toggleAllBackup(); return render(); }
+  if (action === "backup-book-sel") { toggleBackupBook(target.dataset.bookId); return render(); }
+  if (action === "backup-book-expand") { toggleBackupBookExpand(target.dataset.bookId); return render(); }
+  if (action === "backup-deck") { toggleBackupDeck(target.dataset.deckId); return render(); }
+  if (action === "backup-run") return runBackup();
 
   if (action === "open-charquery") return openCharQuery();
   if (action === "charquery-close") { state.ui.query = null; return render(); }
@@ -1234,6 +1243,63 @@ function exportSelectedDeck() {
   render();
 }
 
+// --- 备份（导出 JSON）------------------------------------------------------
+// Reuses the 课本→课文 tree; selection (backup.deckIds) drives storage.exportBackup,
+// which writes one file per book that owns any selected 课文.
+
+function openBackup() {
+  state.ui.backup = {
+    open: true,
+    deckIds: allTexts().map((deck) => deck.id),
+    expandedBooks: state.books.map((book) => book.id)
+  };
+  closeFloaters();
+  state.ui.deckPickerOpen = false;
+  render();
+}
+
+function setBackupDeckIds(idSet) {
+  state.ui.backup.deckIds = allTexts().map((deck) => deck.id).filter((textId) => idSet.has(textId));
+}
+
+function toggleAllBackup() {
+  const backup = state.ui.backup;
+  const texts = allTexts();
+  backup.deckIds = backup.deckIds.length === texts.length ? [] : texts.map((deck) => deck.id);
+}
+
+function toggleBackupDeck(deckId) {
+  const ids = new Set(state.ui.backup.deckIds);
+  if (ids.has(deckId)) ids.delete(deckId); else ids.add(deckId);
+  setBackupDeckIds(ids);
+}
+
+function toggleBackupBook(bookId) {
+  const book = findBook(bookId);
+  if (!book) return;
+  const ids = new Set(state.ui.backup.deckIds);
+  const allOn = book.texts.every((deck) => ids.has(deck.id));
+  book.texts.forEach((deck) => (allOn ? ids.delete(deck.id) : ids.add(deck.id)));
+  setBackupDeckIds(ids);
+}
+
+function toggleBackupBookExpand(bookId) {
+  const backup = state.ui.backup;
+  backup.expandedBooks ||= [];
+  const at = backup.expandedBooks.indexOf(bookId);
+  if (at >= 0) backup.expandedBooks.splice(at, 1);
+  else backup.expandedBooks.push(bookId);
+}
+
+function runBackup() {
+  const deckIds = state.ui.backup?.deckIds || [];
+  if (!deckIds.length) return;
+  const files = exportBackup(deckIds);
+  state.ui.backup = null;
+  render();
+  if (!files) window.alert("没有可备份的课文。");
+}
+
 // --- 查字（按部首查询并导出）----------------------------------------------
 // Selection is over 课文 across all books (flat list from allTexts()); a proper
 // two-level 课本→课文 tree lands in a later phase.
@@ -1445,8 +1511,9 @@ function importDecksFlow() {
 
 function onDocumentKeyDown(event) {
   if (event.key === "Escape") {
-    if (state.ui.query?.open) {
+    if (state.ui.query?.open || state.ui.backup?.open) {
       state.ui.query = null;
+      state.ui.backup = null;
       render();
       return;
     }
