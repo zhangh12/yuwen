@@ -30,6 +30,43 @@ test("tokenizePage：重分词后保留同字位置的用户数据（颜色/读�
   assert.equal(page.tokens[0].pinyin, "chūn");
 });
 
+test("token 对齐：重复字前插入字符，标注不串位（旧贪心算法的失败用例）", () => {
+  // "春春"，第二个春标红。旧算法在前面插入"早"后，精确下标匹配会把红色抢给第一个春。
+  const page = { mainText: "春春", tokens: [] };
+  tokenizePage(page);
+  page.tokens[1].color = "red";
+  const keepId = page.tokens[1].id;
+  page.mainText = "早春春";
+  tokenizePage(page);
+  assert.equal(page.tokens.length, 3);
+  assert.equal(page.tokens[1].color, "", "第一个春不应带色");
+  assert.equal(page.tokens[2].color, "red", "红色跟着第二个春");
+  assert.equal(page.tokens[2].id, keepId, "token id 保持稳定");
+});
+
+test("token 对齐：删除中间字，其余字的读音选择保留", () => {
+  const page = { mainText: "春天花", tokens: [] };
+  tokenizePage(page);
+  page.tokens[2].pinyin = "huā";
+  page.tokens[2].pinyinSource = "user";
+  page.tokens[2].hiddenExamples = ["ex1"];
+  page.mainText = "春花";
+  tokenizePage(page);
+  assert.equal(page.tokens.length, 2);
+  assert.equal(page.tokens[1].text, "花");
+  assert.equal(page.tokens[1].pinyinSource, "user");
+  assert.deepEqual(page.tokens[1].hiddenExamples, ["ex1"]);
+});
+
+test("token 对齐：整段重写后互不相干的字不继承旧数据", () => {
+  const page = { mainText: "春天", tokens: [] };
+  tokenizePage(page);
+  page.tokens[0].color = "red";
+  page.mainText = "山水";
+  tokenizePage(page);
+  assert.ok(page.tokens.every((t) => !t.color), "全新文字不带旧颜色");
+});
+
 test("mergeLexicon：按 字|拼音 合并，id 去重、目标已有的不重复", () => {
   const target = { "春|chūn": { examples: [{ id: "a", text: "1" }], images: [] } };
   mergeLexicon(target, {

@@ -160,12 +160,8 @@ export function lookupPinyin(char) {
   return candidates.length ? candidates : [""];
 }
 
-export function createToken(char, index, previous) {
+export function createToken(char, index, previousSame) {
   const candidates = lookupPinyin(char);
-  const previousSame = previous.find((token) => token.text === char && token.index === index)
-    || previous.find((token) => token.text === char && !token._used);
-  if (previousSame) previousSame._used = true;
-
   return {
     id: previousSame?.id || id("tok"),
     text: char,
@@ -181,14 +177,56 @@ export function createToken(char, index, previous) {
   };
 }
 
+// 用 LCS 把旧 token 序列与新汉字序列做保序对齐。编辑正文（插入/删除/改动）后，
+// 挂在字上的用户数据（所选读音、颜色、停留索引、隐藏名单）跟着"同一个字"走。
+// 旧实现是"同字贪心 + 精确下标优先"：在重复字前面插入字符时，精确下标会把
+// 后一个字的标注抢给前一个字，导致颜色/读音串位；LCS 保持相对顺序，天然避免。
+// 返回 Map<新下标, 旧 token>。
+function alignPreviousTokens(previous, chars) {
+  const n = previous.length;
+  const m = chars.length;
+  if (!n || !m) return new Map();
+  // 极长文本（罕见）退回逐位对齐，避免 O(n·m) 表过大。
+  if (n * m > 1_000_000) {
+    const byIndex = new Map(previous.map((token) => [token.index, token]));
+    return new Map(chars
+      .filter(({ char, index }) => byIndex.get(index)?.text === char)
+      .map(({ index }) => [index, byIndex.get(index)]));
+  }
+  const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = previous[i].text === chars[j].char
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const matched = new Map();
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (previous[i].text === chars[j].char && dp[i][j] === dp[i + 1][j + 1] + 1) {
+      matched.set(chars[j].index, previous[i]);
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i += 1;
+    } else {
+      j += 1;
+    }
+  }
+  return matched;
+}
+
 export function tokenizePage(page) {
-  const previous = deepClone(page.tokens || []);
-  const tokens = [];
+  const previous = page.tokens || [];
+  const chars = [];
   [...page.mainText].forEach((char, index) => {
     if (!isHanzi(char)) return;
-    tokens.push(createToken(char, index, previous));
+    chars.push({ char, index });
   });
-  page.tokens = tokens;
+  const matched = alignPreviousTokens(previous, chars);
+  page.tokens = chars.map(({ char, index }) => createToken(char, index, matched.get(index)));
 }
 
 export function createPage(title = "新页面", text = "") {
