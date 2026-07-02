@@ -80,8 +80,15 @@ export function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-export function nowLabel() {
-  return new Date().toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+export function nowLabel(ts = Date.now()) {
+  return new Date(ts).toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+}
+
+// 本地日期戳（YYYY-MM-DD），用于导出文件名。不用 toISOString()：那是 UTC，
+// 在美洲时区的晚上会得到"明天"的日期。
+export function dateStamp(ts = Date.now()) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function colorValue(key) {
@@ -89,7 +96,9 @@ export function colorValue(key) {
 }
 
 export function isHanzi(char) {
-  return /[㐀-鿿]/u.test(char);
+  // Unified_Ideograph 覆盖基本区与扩展 A–H 的全部统一汉字（含代理对表示的
+  // 生僻字），且不含 々〆 等非汉字表意符号；旧的 [㐀-鿿] 区间漏掉扩展 B 之后。
+  return /\p{Unified_Ideograph}/u.test(char);
 }
 
 export function cycleIndex(value, length) {
@@ -189,9 +198,7 @@ export function createPage(title = "新页面", text = "") {
     mainText: text,
     mainTextScale: 1,
     styles: {
-      mainTextColor: "ink",
-      exampleTextColor: "ink",
-      captionTextColor: "ink"
+      mainTextColor: "ink"
     },
     tokens: [],
     images: [],
@@ -297,8 +304,9 @@ export function ensureDeckModel(deck, book = bookOfDeck(deck)) {
     page.textOnly ||= false;
     page.styles ||= {};
     page.styles.mainTextColor ||= "ink";
-    page.styles.exampleTextColor = "ink";
-    page.styles.captionTextColor = "ink";
+    // 早期版本写入过例句/说明颜色字段，但渲染从未消费——顺手清掉。
+    delete page.styles.exampleTextColor;
+    delete page.styles.captionTextColor;
     page.tokens.forEach(ensureTokenState);
     if (!page.entries) return;
 

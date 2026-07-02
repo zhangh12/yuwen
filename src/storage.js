@@ -15,6 +15,7 @@ import {
   tokenizePage,
   ensureBookModel,
   mergeLexicon,
+  dateStamp,
   deepClone,
   id
 } from "./core.js";
@@ -105,18 +106,36 @@ function applyLoadedState(stored) {
   state.ui.expandedBookIds = state.activeBookId ? [state.activeBookId] : [];
 }
 
-export function saveState() {
-  const payload = buildPayload();
-  // Primary store: IndexedDB. Fire-and-forget; overlapping writes are serialized
-  // by IndexedDB and last-write-wins, which matches the previous behaviour.
-  idbSet(STATE_KEY, payload).catch(() => {});
-  // Best-effort mirror so environments without IndexedDB still persist small
-  // decks. Quota errors (large base64 images) are expected and ignored here.
+// localStorage 镜像只是无 IndexedDB 环境下小数据的兜底，不必每次保存都同步
+// 全量 JSON.stringify（图多的课本一次就是几 MB、每次编辑都要付）。这里做两件事：
+// 防抖合并连续保存；超过配额必炸的大 payload 直接跳过（IndexedDB 为主存）。
+const MIRROR_DEBOUNCE_MS = 400;
+const MIRROR_LIMIT = 4_500_000;
+let mirrorTimer = 0;
+
+function mirrorToLocalStorage() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    const json = JSON.stringify(buildPayload());
+    if (json.length > MIRROR_LIMIT) return;
+    localStorage.setItem(STORAGE_KEY, json);
   } catch {
     /* IndexedDB remains the source of truth */
   }
+}
+
+// 关页/切走时冲刷未落盘的镜像，避免兜底数据落后于主存。
+window.addEventListener("pagehide", () => {
+  window.clearTimeout(mirrorTimer);
+  mirrorToLocalStorage();
+});
+
+export function saveState() {
+  // Primary store: IndexedDB，即改即存。Fire-and-forget; overlapping writes are
+  // serialized by IndexedDB and last-write-wins, which matches the previous
+  // behaviour.
+  idbSet(STATE_KEY, buildPayload()).catch(() => {});
+  window.clearTimeout(mirrorTimer);
+  mirrorTimer = window.setTimeout(mirrorToLocalStorage, MIRROR_DEBOUNCE_MS);
 }
 
 export async function loadState() {
@@ -171,8 +190,11 @@ export function touchDeck(deck = getActiveDeck()) {
 // when the shape is unrecognized.
 function toEnvelope(parsed) {
   if (parsed && parsed.format === "yuwen-backup" && parsed.book && Array.isArray(parsed.book.texts)) {
+    const rawTitle = typeof parsed.book.title === "string" && parsed.book.title.trim()
+      ? parsed.book.title.trim()
+      : "导入的课本";
     return {
-      title: typeof parsed.book.title === "string" && parsed.book.title.trim() ? parsed.book.title : "导入的课本",
+      title: rawTitle.slice(0, 60),
       lexicon: (parsed.book.lexicon && typeof parsed.book.lexicon === "object") ? parsed.book.lexicon : {},
       texts: parsed.book.texts
     };
@@ -222,28 +244,6 @@ function cloneTextsFresh(texts) {
   });
 }
 
-// Export a single deck to its own JSON file (same payload shape as a full
-// backup, but containing just this deck).
-export function exportDeck(deck) {
-  if (!deck) return;
-  const payload = {
-    decks: [deck],
-    activeDeckId: deck.id,
-    activePageId: deck.pages?.[0]?.id || ""
-  };
-  const json = JSON.stringify(payload, null, 2);
-  const blob = new Blob([json], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const safeTitle = String(deck.title || "讲义").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 40);
-  link.href = url;
-  link.download = `yuwen-${safeTitle}-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
 // --- 备份（Backup export）--------------------------------------------------
 //
 // One backup file = exactly one book. A whole-book backup carries the book's
@@ -266,7 +266,7 @@ function downloadJson(obj, filename) {
 
 function backupFilename(title) {
   const safe = String(title || "课本").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 40);
-  return `yuwen-${safe}-${new Date().toISOString().slice(0, 10)}.json`;
+  return `yuwen-${safe}-${dateStamp()}.json`;
 }
 
 // The slice of a book's lexicon referenced by the given 课文 (by 字|拼音 key).
@@ -363,13 +363,18 @@ export function addBackupToBook(env, bookId) {
   return book;
 }
 
-// Import several backup files at once — each becomes a new book. Returns count.
+// Import several backup files at once — each becomes a new book. All files are
+// parsed (and validated) before any book is added, so a bad file aborts the
+// whole batch instead of leaving it half-imported. Returns the count.
 export async function importBackups(files) {
   const envelopes = [];
   for (const file of files) envelopes.push(await parseBackupFile(file));
-  const first = envelopes.map((env) => addBackupAsNewBook(env))[0];
-  if (first) { activateBook(first); saveState(); }
-  return envelopes.length;
+  const books = envelopes.map((env) => addBackupAsNewBook(env));
+  if (books.length) {
+    activateBook(books[0]);
+    saveState();
+  }
+  return books.length;
 }
 
 // Import a "yuwen-pages" file: append each page to the CURRENT deck. yuwen

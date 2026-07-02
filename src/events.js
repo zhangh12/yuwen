@@ -28,10 +28,11 @@ import {
   tokenizePage,
   allTexts,
   deepClone,
-  id
+  id,
+  dateStamp
 } from "./core.js";
 import { render, app } from "./render.js";
-import { saveState, touchDeck, exportDeck, exportBackup, importBackups, parseBackupFile, addBackupAsNewBook, addBackupToBook, importPages } from "./storage.js";
+import { saveState, touchDeck, exportBackup, importBackups, parseBackupFile, addBackupAsNewBook, addBackupToBook, importPages } from "./storage.js";
 import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, buildDocx, buildPrintHtml } from "./charquery.js";
 import { fetchStrokes, buildZitieHtml } from "./zitie.js";
 
@@ -215,6 +216,13 @@ function onAppFocusOut(event) {
 function onAppKeyDown(event) {
   if (event.key === "Escape" && event.target.matches?.("[data-draft]")) {
     event.target.blur();
+    return;
+  }
+  // 页面条目是 div[role=button]，浏览器不会自动给它键盘激活；补上
+  // Enter/空格 = 打开该页（复用点击分发）。
+  if ((event.key === "Enter" || event.key === " ") && event.target.matches?.(".page-item")) {
+    event.preventDefault();
+    event.target.click();
   }
 }
 
@@ -321,7 +329,6 @@ function handleAction(target, event) {
   if (action === "delete-page") return deletePage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "delete-pages") return deletePages();
   if (action === "print-page") return openPrintPage(target.dataset.pageId || state.ui.pageContext?.pageId);
-  if (action === "export-deck") return exportSelectedDeck();
   if (action === "import-deck") return importBackupsFlow();
   if (action === "import-choice-close") { state.ui.importChoice = null; return render(); }
   if (action === "import-as-newbook") return importAsNewBook();
@@ -1226,26 +1233,31 @@ function fallbackCopy(text, done) {
 
 function speakText(text) {
   if (!("speechSynthesis" in window)) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "zh-CN";
-  // Pin an actual Chinese voice when one exists; otherwise the engine may read
-  // the character with the default (often English) voice and mangle it.
-  const voices = window.speechSynthesis.getVoices?.() || [];
-  const zhVoice = voices.find((voice) => /^zh\b/i.test(voice.lang) || /zh[-_]/i.test(voice.lang));
-  if (zhVoice) utterance.voice = zhVoice;
-  utterance.rate = 0.82;
-  window.speechSynthesis.speak(utterance);
-}
+  const synth = window.speechSynthesis;
+  synth.cancel();
 
-// --- Import / export -------------------------------------------------------
+  const speak = () => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-CN";
+    // Pin an actual Chinese voice when one exists; otherwise the engine may read
+    // the character with the default (often English) voice and mangle it.
+    const voices = synth.getVoices?.() || [];
+    const zhVoice = voices.find((voice) => /^zh\b/i.test(voice.lang) || /zh[-_]/i.test(voice.lang));
+    if (zhVoice) utterance.voice = zhVoice;
+    utterance.rate = 0.82;
+    synth.speak(utterance);
+  };
 
-function exportSelectedDeck() {
-  const { deck } = findDeckAndBook(state.ui.deckContext?.deckId);
-  const target = deck || getActiveDeck();
-  state.ui.deckContext = null;
-  if (target) exportDeck(target);
-  render();
+  // Chrome 首次调用时语音表异步加载、getVoices() 返回空——此时直接读会退回
+  // 默认（常是英文）嗓。等一次 voiceschanged 再读；引擎不触发就短暂兜底。
+  if (!(synth.getVoices?.() || []).length) {
+    let spoken = false;
+    const once = () => { if (!spoken) { spoken = true; speak(); } };
+    synth.addEventListener?.("voiceschanged", once, { once: true });
+    window.setTimeout(once, 300);
+  } else {
+    speak();
+  }
 }
 
 // --- 备份（导出 JSON）------------------------------------------------------
@@ -1475,7 +1487,7 @@ function exportCharQueryWord() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `查字-${new Date().toISOString().slice(0, 10)}.docx`;
+    link.download = `查字-${dateStamp()}.docx`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -1489,11 +1501,15 @@ function exportCharQueryWord() {
 function printCharQuery() {
   const html = buildPrintHtml(currentQueryGroups(), state.ui.query.includePinyin);
   const win = window.open("", "_blank");
-  if (!win) return;
+  if (!win) {
+    window.alert("浏览器拦截了新窗口，请允许本站弹出窗口后重试。");
+    return;
+  }
   win.document.write(html);
   win.document.close();
   win.focus();
-  win.print();
+  // 等文档排版完成再打印——立即 print 在个别浏览器会打出空白页（与字帖同法）。
+  win.setTimeout(() => win.print(), 350);
 }
 
 function importPagesFlow() {
@@ -1530,6 +1546,7 @@ function importBackupsFlow() {
       if (files.length > 1) {
         const count = await importBackups(files);
         clearTransient();
+        expandBook(state.activeBookId);
         state.ui.deckPickerOpen = false;
         render();
         window.alert(`已导入 ${count} 本课本。`);
@@ -1553,6 +1570,7 @@ function importAsNewBook() {
   addBackupAsNewBook(env);
   state.ui.importChoice = null;
   clearTransient();
+  expandBook(state.activeBookId);
   render();
 }
 
@@ -1562,6 +1580,7 @@ function importIntoBook(bookId) {
   addBackupToBook(env, bookId);
   state.ui.importChoice = null;
   clearTransient();
+  expandBook(state.activeBookId);
   render();
 }
 

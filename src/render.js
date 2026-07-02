@@ -192,7 +192,7 @@ function renderNavText(book, deck) {
   return `
     <button class="deck-item nav-text ${active ? "is-active" : ""}" data-deck-id="${deck.id}" data-book-id="${book.id}">
       <span class="deck-title">${escapeHtml(deck.title)}</span>
-      <span class="deck-meta">${deck.pages.length} 页</span>
+      <span class="deck-meta">${deck.pages.length} 页${deck.updatedAt ? ` · ${nowLabel(deck.updatedAt)}` : ""}</span>
     </button>
   `;
 }
@@ -224,7 +224,7 @@ function renderLesson(page, { longText }) {
 
   return `
     <section class="lesson-page">
-      <div class="lesson-grid" style="--main-color:${colorValue(page.styles.mainTextColor)};--example-color:${colorValue("ink")};--caption-color:${colorValue("ink")};--main-scale:${page.mainTextScale}">
+      <div class="lesson-grid" style="--main-color:${colorValue(page.styles.mainTextColor)};--main-scale:${page.mainTextScale}">
         ${renderMainZone(page, longText)}
         ${renderExampleZone(page)}
         ${renderImageZone(page)}
