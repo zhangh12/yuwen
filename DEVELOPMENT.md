@@ -123,7 +123,6 @@ state.ui{…}                   纯瞬时界面状态（不持久化）
 
 - `pages[].text` 为正文，段落用 `\n`；`pages[].title` 可选（省略取正文开头）。
 - `id`/`title` 顶层字段：写进仓库根 `inbox.json`（收件箱，.gitignore 内）时 `id` **必填**（按它去重），`title` 用作一键「新建为课文」的课文名。页面栏手动导入则都可省略。
-- 参考 `示例-导入页面.json`。
 
 **`yuwen-backup`**（备份；一个文件恰好一本课本）：
 
@@ -143,8 +142,7 @@ state.ui{…}                   纯瞬时界面状态（不持久化）
 
 ## 数据来源
 
-- `vendor/data-chars-local.js`：本地字库（`window.zDictChars`，来自 zdict.js）——拼音候选与字库例句；加载失败回退 `core.js` 内置 `FALLBACK_PINYIN`。
-- `vendor/data-chars.js`：原始字库存档，运行时不加载。
+- `vendor/data-chars-local.js`：本地字库（`window.zDictChars`，来自 zdict.js）——拼音候选与字库例句；加载失败回退 `core.js` 内置 `FALLBACK_PINYIN`。（原始 `export default` 版存档 `data-chars.js` 与其内容相同、运行时不加载，已删；如需可从 git 历史找回。）
 - `vendor/data-radicals.js`：字→部首（make-me-a-hanzi），离线。
 - `vendor/data-phrases.js`：二字词→拼音（mozillazg/phrase-pinyin-data，MIT），约 393KB；重新生成：
   ```bash

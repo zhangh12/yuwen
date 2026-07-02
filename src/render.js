@@ -145,9 +145,6 @@ function renderFullShell(deck, page, flags) {
     <header class="topbar">
       <div class="brand"><strong>语文</strong><span>yǔwén · v${APP_VERSION}</span></div>
       <div class="toolbar-group">
-        <button data-action="toggle-deck-picker">课本</button>
-        <span class="active-deck-title" title="${book.title} › ${deck.title}">${book.title}<span class="crumb-sep">›</span>${deck.title}</span>
-        <button title="当前课本的课文目录" data-action="toggle-toc">目录</button>
         <button title="上一课文" data-action="prev-deck" ${deckIndex > 0 ? "" : rawHtml("disabled")}>‹ 上一课</button>
         <button title="下一课文" data-action="next-deck" ${deckIndex >= 0 && deckIndex < book.texts.length - 1 ? "" : rawHtml("disabled")}>下一课 ›</button>
         <button title="按部首查字并导出" data-action="open-charquery">查字</button>
@@ -163,8 +160,12 @@ function renderFullShell(deck, page, flags) {
         <button data-action="clear-page-colors" title="清除本页正文的全部颜色">清色</button>
         <button data-action="toggle-chrome">最大化</button>
       </div>
-      <div class="toolbar-spacer"></div>
-      ${state.ui.annotating && state.ui.annotationColor ? html`<span class="annotation-pill">Option/Alt 点击上色：${COLORS.find((color) => color.key === state.ui.annotationColor)?.label}</span>` : ""}
+      <div class="toolbar-group toolbar-context">
+        <button data-action="toggle-deck-picker">课本</button>
+        <button title="当前课本的课文目录" data-action="toggle-toc">目录</button>
+        <span class="active-deck-title" title="${book.title} › ${deck.title}">${book.title}<span class="crumb-sep">›</span>${deck.title}</span>
+        ${state.ui.annotating && state.ui.annotationColor ? html`<span class="annotation-pill">Option/Alt 点击上色：${COLORS.find((color) => color.key === state.ui.annotationColor)?.label}</span>` : ""}
+      </div>
     </header>
     <aside class="pages-panel">
       <div class="panel-head">
@@ -184,6 +185,12 @@ function renderFullShell(deck, page, flags) {
   `;
 }
 
+// 课本/目录 弹层贴在触发按钮下方（events 在点击时实测按钮位置存入锚点；
+// 无锚点时退回样式表里的默认定位）。
+function popoverAnchorStyle(anchor) {
+  return anchor ? `left:${anchor.x}px;top:${anchor.y}px` : "";
+}
+
 // 当前课本的课文目录：只列本书的课文（带序号），点击即跳转。与「课本」导航器
 // 互斥打开；条目复用 data-deck-id 委托，无需新事件路径。
 function renderToc() {
@@ -191,7 +198,7 @@ function renderToc() {
   const book = getActiveBook();
   if (!book) return "";
   return html`
-    <div class="deck-popover toc-popover">
+    <div class="deck-popover toc-popover" style="${popoverAnchorStyle(state.ui.tocAnchor)}">
       <div class="deck-popover-head">
         <span title="${book.title}">课文目录 · ${book.title}</span>
       </div>
@@ -213,7 +220,7 @@ function renderToc() {
 function renderNavigator() {
   if (!state.ui.deckPickerOpen || state.ui.chromeCollapsed) return "";
   return html`
-    <div class="deck-popover nav-popover">
+    <div class="deck-popover nav-popover" style="${popoverAnchorStyle(state.ui.navAnchor)}">
       <div class="deck-popover-head">
         <span>课本</span>
         <span class="deck-popover-actions">

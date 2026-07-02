@@ -100,6 +100,16 @@ function clearSelection() {
   render();
 }
 
+// 弹层锚点：贴在触发按钮左下方。课本/目录 按钮在工具栏最右区、位置随窗口
+// 换行而变，点击时实测比硬编码坐标可靠；横向夹在视口内（288 为弹层宽度）。
+function popoverAnchor(button) {
+  const rect = button.getBoundingClientRect();
+  return {
+    x: Math.max(8, Math.min(Math.round(rect.left), window.innerWidth - 296)),
+    y: Math.round(rect.bottom + 8)
+  };
+}
+
 function onAppClick(event) {
   const el = eventEl(event);
   if (!el) return;
@@ -438,6 +448,7 @@ function handleAction(target, event) {
 
   if (action === "toggle-deck-picker") {
     state.ui.deckPickerOpen = !state.ui.deckPickerOpen;
+    state.ui.navAnchor = popoverAnchor(target);
     state.ui.tocOpen = false;
     state.ui.deckContext = null;
     state.ui.pageContext = null;
@@ -448,6 +459,7 @@ function handleAction(target, event) {
 
   if (action === "toggle-toc") {
     state.ui.tocOpen = !state.ui.tocOpen;
+    state.ui.tocAnchor = popoverAnchor(target);
     state.ui.deckPickerOpen = false;
     state.ui.deckContext = null;
     state.ui.pageContext = null;

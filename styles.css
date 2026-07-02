@@ -125,16 +125,23 @@ input:focus {
   border-left: 1px solid var(--line);
 }
 
+/* 「课本/目录/面包屑」组放在工具栏最右（最大化之后），占据全部剩余宽度：
+   前面各按钮组都是固定宽度、课本/目录 也因此位置固定，面包屑在末尾弹性
+   伸缩吸收标题长短变化——切换课文时任何按钮都不移位。 */
+.toolbar-context {
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
 .active-deck-title {
-  max-width: 220px;
+  flex: 1;
+  /* 窗口很窄时保底 96px：标题缩成省略号但不至于完全消失（其余按钮组换行）。 */
+  min-width: 96px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
-}
-
-.toolbar-spacer {
-  flex: 1;
 }
 
 .toggle {
@@ -259,10 +266,12 @@ input:focus {
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
-/* 课本 › 课文 navigator (two-level accordion inside the picker popover) */
+/* 课本 › 课文 navigator (two-level accordion inside the picker popover)。
+   left/top 由行内样式按触发按钮实测位置锚定（events.popoverAnchor），
+   这里的定位只是无锚点时的兜底。 */
 .nav-popover {
   width: 288px;
-  left: 84px;
+  left: 196px;
 }
 
 .nav-list {
@@ -343,7 +352,7 @@ input:focus {
 /* 「目录」弹框：当前课本的课文列表（带序号），点击跳转 */
 .toc-popover {
   width: 288px;
-  left: 84px;
+  left: 255px;
 }
 
 .toc-list {
@@ -884,6 +893,7 @@ input:focus {
 .annotation-pill {
   color: var(--muted);
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .hidden {
