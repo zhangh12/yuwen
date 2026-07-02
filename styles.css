@@ -340,6 +340,47 @@ input:focus {
   margin: 0 6px;
 }
 
+/* 「目录」弹框：当前课本的课文列表（带序号），点击跳转 */
+.toc-popover {
+  width: 288px;
+  left: 84px;
+}
+
+.toc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
+}
+
+.toc-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 0;
+  padding: 7px 9px;
+}
+
+.toc-item .deck-title {
+  flex: 1;
+}
+
+.toc-item .deck-meta {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.toc-num {
+  min-width: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.toc-item.is-active .toc-num {
+  color: var(--accent);
+}
+
 .deck-title {
   display: block;
   overflow: hidden;

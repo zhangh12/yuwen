@@ -26,11 +26,13 @@ test("radicalsInDecks：按选中课文统计部首（去重字数，降序）",
   assert.equal(byName["山"], 1);
 });
 
-test("charsInDecks：radicals=null 取全部字；pageId 限定单页；appear 为首次出现序", () => {
+test("charsInDecks：radicals=null 取全部字；pageIds 限定页面；appear 为首次出现序", () => {
   const all = charsInDecks(["d1", "d2"], null, "appear");
   assert.ok(all.some((c) => c.char === "天"), "无部首过滤时包含部首表外的字");
-  const page2 = charsInDecks(["d1", "d2"], null, "appear", "p2");
+  const page2 = charsInDecks(["d1", "d2"], null, "appear", ["p2"]);
   assert.deepEqual(page2.map((c) => c.char), ["山", "上", "有", "花"]);
+  const both = charsInDecks(["d1", "d2"], null, "appear", ["p1", "p2"]);
+  assert.ok(both.some((c) => c.char === "春") && both.some((c) => c.char === "山"), "多页时包含每一页的字");
   const freq = charsInDecks(["d1", "d2"], ["艹"], "freq");
   assert.equal(freq[0].char, "花"); // 花出现 2 次 > 草 1 次
 });
@@ -47,8 +49,10 @@ test("collectMatches + groupByRadical + mergeBySentence：例句取子句、按�
   assert.match(headerLine(merged, false), /—— 课一 · 第1页$/);
 });
 
-test("collectMatches：pageId 限定后不含其它页内容", () => {
-  const entries = collectMatches(["d1", "d2"], new Set(["花"]), "p2");
+test("collectMatches：pageIds 限定后不含其它页内容；多页取并集", () => {
+  const entries = collectMatches(["d1", "d2"], new Set(["花"]), ["p2"]);
   assert.equal(entries.length, 1);
   assert.equal(entries[0].sentence, "山上有花。");
+  const both = collectMatches(["d1", "d2"], new Set(["花"]), ["p1", "p2"]);
+  assert.equal(both.length, 2);
 });

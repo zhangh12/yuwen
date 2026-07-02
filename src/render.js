@@ -94,6 +94,7 @@ export function render() {
     <div class="app-shell ${state.ui.chromeCollapsed ? "is-collapsed" : ""}" style="--annotation-color:${colorValue(state.ui.annotationColor || "red")}">
       ${state.ui.chromeCollapsed ? renderCollapsed(page) : renderFullShell(deck, page, { longText })}
       ${renderNavigator()}
+      ${renderToc()}
       ${renderContextMenu()}
       ${renderBookContextMenu()}
       ${renderDeckContextMenu()}
@@ -138,12 +139,16 @@ function renderCollapsed(page) {
 
 function renderFullShell(deck, page, flags) {
   const book = getActiveBook();
+  const deckIndex = book.texts.findIndex((item) => item.id === deck.id);
   return html`
     <header class="topbar">
       <div class="brand"><strong>语文</strong><span>yǔwén · v${APP_VERSION}</span></div>
       <div class="toolbar-group">
         <button data-action="toggle-deck-picker">课本</button>
         <span class="active-deck-title" title="${book.title} › ${deck.title}">${book.title}<span class="crumb-sep">›</span>${deck.title}</span>
+        <button title="当前课本的课文目录" data-action="toggle-toc">目录</button>
+        <button title="上一课文" data-action="prev-deck" ${deckIndex > 0 ? "" : rawHtml("disabled")}>‹ 上一课</button>
+        <button title="下一课文" data-action="next-deck" ${deckIndex >= 0 && deckIndex < book.texts.length - 1 ? "" : rawHtml("disabled")}>下一课 ›</button>
         <button title="按部首查字并导出" data-action="open-charquery">查字</button>
       </div>
       <div class="toolbar-group">
@@ -175,6 +180,30 @@ function renderFullShell(deck, page, flags) {
     <main class="stage">
       <div class="workspace">${renderLesson(page, flags)}</div>
     </main>
+  `;
+}
+
+// 当前课本的课文目录：只列本书的课文（带序号），点击即跳转。与「课本」导航器
+// 互斥打开；条目复用 data-deck-id 委托，无需新事件路径。
+function renderToc() {
+  if (!state.ui.tocOpen || state.ui.chromeCollapsed) return "";
+  const book = getActiveBook();
+  if (!book) return "";
+  return html`
+    <div class="deck-popover toc-popover">
+      <div class="deck-popover-head">
+        <span title="${book.title}">课文目录 · ${book.title}</span>
+      </div>
+      <div class="toc-list">
+        ${book.texts.map((deck, index) => html`
+          <button class="deck-item toc-item ${deck.id === state.activeDeckId ? "is-active" : ""}" data-deck-id="${deck.id}" data-book-id="${book.id}">
+            <span class="toc-num">${index + 1}</span>
+            <span class="deck-title">${deck.title}</span>
+            <span class="deck-meta">${deck.pages.length} 页</span>
+          </button>
+        `)}
+      </div>
+    </div>
   `;
 }
 
@@ -449,11 +478,13 @@ function renderDeckContextMenu() {
 function renderPageContextMenu() {
   if (!state.ui.pageContext) return "";
   const selectedIds = state.ui.selectedPageIds || [];
-  // When 2+ pages are selected and the right-click landed on one of them, offer
-  // a single batch-delete action instead of the per-page menu.
+  // When 2+ pages are selected and the right-click landed on one of them, the
+  // menu offers batch actions over the whole selection instead of the per-page
+  // menu.
   if (selectedIds.length > 1 && selectedIds.includes(state.ui.pageContext.pageId)) {
     return html`
       <div class="context-menu" style="left:${state.ui.pageContext.x}px;top:${state.ui.pageContext.y}px">
+        <button class="menu-item" data-action="print-pages">打印选中的 ${selectedIds.length} 个页面</button>
         <button class="menu-item" data-action="delete-pages">删除选中的 ${selectedIds.length} 个页面</button>
       </div>
     `;
@@ -472,7 +503,8 @@ function renderCharQuery() {
   if (!query?.open) return "";
 
   const isPage = query.scope === "page";
-  const title = isPage ? "打印页面" : "查字导出";
+  const pageCount = (query.pageIds || []).length;
+  const title = isPage ? (pageCount > 1 ? `打印页面（${pageCount} 页）` : "打印页面") : "查字导出";
   const stepLabel = isPage
     ? { 3: "选择单字", 4: "预览导出" }[query.step]
     : { 1: "①选择课文", 2: "②选择部首", 3: "③选择单字", 4: "④预览导出" }[query.step];
@@ -538,7 +570,7 @@ function renderCharQueryStep(query) {
 
   if (query.step === 3) {
     const candidates = query.scope === "page"
-      ? charsInDecks(query.deckIds, null, query.charSort, query.pageId)
+      ? charsInDecks(query.deckIds, null, query.charSort, query.pageIds)
       : charsInDecks(query.deckIds, query.radicals, query.charSort);
     const selected = new Set(query.chars || []);
     const allSelected = candidates.length > 0 && candidates.every((item) => selected.has(item.char));
@@ -556,7 +588,7 @@ function renderCharQueryStep(query) {
       <div class="cq-chips">
         ${candidates.length ? candidates.map((item) => html`
           <button class="cq-chip ${selected.has(item.char) ? "is-sel" : ""}" data-action="charquery-char" data-char="${item.char}">${item.char} <span class="cq-dim">${item.count}</span></button>
-        `) : html`<span class="cq-dim">这一页没有可导出的字。</span>`}
+        `) : html`<span class="cq-dim">${query.scope === "page" && (query.pageIds || []).length > 1 ? "所选页面没有可导出的字。" : "这一页没有可导出的字。"}</span>`}
       </div>
       <div class="cq-foot">
         ${query.scope === "page" ? html`<span></span>` : html`<button data-action="charquery-back">← 上一步</button>`}
@@ -565,7 +597,7 @@ function renderCharQueryStep(query) {
     `;
   }
 
-  const groups = groupByRadical(collectMatches(query.deckIds, new Set(query.chars || []), query.pageId || null));
+  const groups = groupByRadical(collectMatches(query.deckIds, new Set(query.chars || []), query.pageIds || null));
   const total = groups.reduce((sum, group) => sum + group.items.length, 0);
   const uniqueCount = (query.chars || []).length;
   return html`

@@ -68,15 +68,16 @@ export function radicalsInDecks(deckIds) {
 // sortBy: "appear"（首次出现顺序）| "freq"（出现次数降序）| "radical"（按部首归类，与 Word 导出的分组顺序一致）。
 // radicals: an array to filter by, or null/undefined to include every 汉字
 // (used by 打印页面, which wants all chars regardless of radical).
-// pageId: restrict to a single page when given.
-export function charsInDecks(deckIds, radicals, sortBy = "freq", pageId = null) {
+// pageIds: restrict to the given pages when non-empty (array of page ids).
+export function charsInDecks(deckIds, radicals, sortBy = "freq", pageIds = null) {
   const ids = new Set(deckIds);
   const wanted = radicals ? new Set(radicals) : null;
+  const pageSet = pageIds && pageIds.length ? new Set(pageIds) : null;
   const counts = new Map();
   allTexts().forEach((deck) => {
     if (!ids.has(deck.id)) return;
     deck.pages.forEach((page) => {
-      if (pageId && page.id !== pageId) return;
+      if (pageSet && !pageSet.has(page.id)) return;
       for (const ch of String(page.mainText || "")) {
         if (!isHanzi(ch)) continue;
         const radical = lookupRadical(ch);
@@ -101,14 +102,16 @@ export function charsInDecks(deckIds, radicals, sortBy = "freq", pageId = null) 
 }
 
 // `chars` is a Set of the characters to include (already chosen by the user).
-export function collectMatches(deckIds, chars, pageId = null) {
+// pageIds: restrict to the given pages when non-empty (array of page ids).
+export function collectMatches(deckIds, chars, pageIds = null) {
   const ids = new Set(deckIds);
   const wanted = chars instanceof Set ? chars : new Set(chars);
+  const pageSet = pageIds && pageIds.length ? new Set(pageIds) : null;
   const entries = [];
   allTexts().forEach((deck, deckOrder) => {
     if (!ids.has(deck.id)) return;
     deck.pages.forEach((page, pageIndex) => {
-      if (pageId && page.id !== pageId) return;
+      if (pageSet && !pageSet.has(page.id)) return;
       const { cps, clauses, clauseIndexOf } = buildClauses(page.mainText);
       const tokenByIndex = new Map((page.tokens || []).map((token) => [token.index, token]));
       const seen = new Set();

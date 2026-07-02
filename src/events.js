@@ -133,6 +133,7 @@ function onAppClick(event) {
     clearTransient();
     expandBook(state.activeBookId);
     state.ui.deckPickerOpen = false;
+    state.ui.tocOpen = false;
     saveState();
     render();
     return;
@@ -381,7 +382,10 @@ function handleAction(target, event) {
   if (action === "copy-page") return copyPage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "delete-page") return deletePage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "delete-pages") return deletePages();
-  if (action === "print-page") return openPrintPage(target.dataset.pageId || state.ui.pageContext?.pageId);
+  if (action === "print-page") return openPrintPage([target.dataset.pageId || state.ui.pageContext?.pageId || state.activePageId]);
+  if (action === "print-pages") return openPrintPage(currentPageSelection());
+  if (action === "prev-deck") return stepDeck(-1);
+  if (action === "next-deck") return stepDeck(1);
   if (action === "import-deck") return importBackupsFlow();
   if (action === "inbox-new-deck") return inboxImport("new");
   if (action === "inbox-append") return inboxImport("append");
@@ -426,6 +430,17 @@ function handleAction(target, event) {
 
   if (action === "toggle-deck-picker") {
     state.ui.deckPickerOpen = !state.ui.deckPickerOpen;
+    state.ui.tocOpen = false;
+    state.ui.deckContext = null;
+    state.ui.pageContext = null;
+    state.ui.menu = null;
+    state.ui.pinyinMenu = null;
+    return render();
+  }
+
+  if (action === "toggle-toc") {
+    state.ui.tocOpen = !state.ui.tocOpen;
+    state.ui.deckPickerOpen = false;
     state.ui.deckContext = null;
     state.ui.pageContext = null;
     state.ui.menu = null;
@@ -1070,6 +1085,20 @@ function deleteDeck(deckId = state.activeDeckId) {
   render();
 }
 
+// 上一课文 / 下一课文：在当前课本内前后切换（到头时按钮已置灰，这里再兜底）。
+function stepDeck(delta) {
+  const book = getActiveBook();
+  if (!book) return;
+  const index = book.texts.findIndex((deck) => deck.id === state.activeDeckId);
+  const next = book.texts[index + delta];
+  if (!next) return;
+  state.activeDeckId = next.id;
+  state.activePageId = next.pages[0]?.id || "";
+  clearTransient();
+  saveState();
+  render();
+}
+
 // 重画后把当前页条目滚到可见位置（新增/复制的页可能在视口之外）。
 function scrollActivePageIntoView() {
   app.querySelector(".page-item.is-active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -1443,16 +1472,18 @@ function openCharQuery() {
   render();
 }
 
-// 打印页面：复用查字机制，但范围锁定在当前页（scope:"page" + pageId），直接进
-// 「选择单字」步，默认全选；预览/导出（Word / 字帖）走同一套代码。
-function openPrintPage(pageId = state.activePageId) {
-  const deckId = state.activeDeckId;
+// 打印页面：复用查字机制，但范围锁定在所选页面（scope:"page" + pageIds，单页或
+// 多选的若干页），直接进「选择单字」步，默认全选；预览/导出（Word / 字帖）走同
+// 一套代码。
+function openPrintPage(pageIds = [state.activePageId]) {
+  const deck = getActiveDeck();
+  const valid = (pageIds || []).filter((pid) => deck.pages.some((page) => page.id === pid));
   state.ui.query = {
     open: true,
     step: 3,
     scope: "page",
-    deckIds: [deckId],
-    pageId,
+    deckIds: [state.activeDeckId],
+    pageIds: valid.length ? valid : [state.activePageId],
     radicals: [],
     chars: [],
     charSort: "appear",
@@ -1529,7 +1560,7 @@ function toggleQueryChar(char) {
 function toggleAllQueryChars() {
   const query = state.ui.query;
   const all = (query.scope === "page"
-    ? charsInDecks(query.deckIds, null, query.charSort, query.pageId)
+    ? charsInDecks(query.deckIds, null, query.charSort, query.pageIds)
     : charsInDecks(query.deckIds, query.radicals)).map((item) => item.char);
   const allSelected = all.length > 0 && all.every((char) => query.chars.includes(char));
   query.chars = allSelected ? [] : all;
@@ -1537,7 +1568,7 @@ function toggleAllQueryChars() {
 
 function currentQueryGroups() {
   const query = state.ui.query;
-  return groupByRadical(collectMatches(query.deckIds, new Set(query.chars || []), query.pageId || null));
+  return groupByRadical(collectMatches(query.deckIds, new Set(query.chars || []), query.pageIds || null));
 }
 
 // 字帖用的唯一字顺序 = 从上到下读 Word 文档时各字首次出现的顺序：
@@ -1724,11 +1755,12 @@ function onDocumentKeyDown(event) {
 
 function onDocumentClick(event) {
   const clickedOverlay = event.target.closest(".context-menu") || event.target.closest(".pinyin-popover") || event.target.closest(".deck-popover");
-  const clickedTrigger = event.target.closest(".token") || event.target.closest('[data-action="toggle-deck-picker"]');
+  const clickedTrigger = event.target.closest(".token") || event.target.closest('[data-action="toggle-deck-picker"]') || event.target.closest('[data-action="toggle-toc"]');
   if (!clickedOverlay && !clickedTrigger) {
-    if (state.ui.menu || state.ui.pinyinMenu || state.ui.deckContext || state.ui.pageContext || state.ui.deckPickerOpen) {
+    if (state.ui.menu || state.ui.pinyinMenu || state.ui.deckContext || state.ui.pageContext || state.ui.deckPickerOpen || state.ui.tocOpen) {
       closeFloaters();
       state.ui.deckPickerOpen = false;
+      state.ui.tocOpen = false;
       render();
     }
   }
