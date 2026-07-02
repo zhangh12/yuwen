@@ -72,6 +72,7 @@ export function render() {
       ${renderPinyinMenu()}
       ${renderCharQuery()}
       ${renderBackup()}
+      ${renderImportChoice()}
     </div>
   `;
 
@@ -637,6 +638,38 @@ function renderBackupBook(book, selected, expanded) {
           <span class="cq-dim">${deck.pages.length} 页</span>
         </button>
       `).join("")}</div>` : ""}
+    </div>
+  `;
+}
+
+// Single-file backup import: choose to restore as a new book or fold the 课文
+// into an existing one.
+function renderImportChoice() {
+  const choice = state.ui.importChoice;
+  if (!choice?.open) return "";
+  const count = choice.env.texts.length;
+  return `
+    <div class="cq-overlay">
+      <div class="cq-dialog cq-dialog-narrow">
+        <div class="cq-head">
+          <span>导入备份 · 《${escapeHtml(choice.env.title)}》（${count} 篇课文）</span>
+          <button class="cq-x" data-action="import-choice-close" aria-label="关闭">×</button>
+        </div>
+        <div class="cq-body">
+          <div class="cq-toolbar">
+            <button class="cq-primary" data-action="import-as-newbook">作为新课本导入</button>
+            <span class="cq-dim">或把这些课文插入现有课本 ↓</span>
+          </div>
+          <div class="cq-list">
+            ${state.books.map((book) => `
+              <button class="cq-row" data-action="import-into-book" data-book-id="${book.id}">
+                <span class="cq-row-title">${escapeHtml(book.title)}</span>
+                <span class="cq-dim">${book.texts.length} 课 · 插入这里</span>
+              </button>
+            `).join("")}
+          </div>
+        </div>
+      </div>
     </div>
   `;
 }

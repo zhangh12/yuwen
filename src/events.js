@@ -31,7 +31,7 @@ import {
   id
 } from "./core.js";
 import { render, app } from "./render.js";
-import { saveState, touchDeck, exportDeck, exportBackup, importData, importPages } from "./storage.js";
+import { saveState, touchDeck, exportDeck, exportBackup, importBackups, parseBackupFile, addBackupAsNewBook, addBackupToBook, importPages } from "./storage.js";
 import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, buildDocx, buildPrintHtml } from "./charquery.js";
 import { fetchStrokes, buildZitieHtml } from "./zitie.js";
 
@@ -133,6 +133,7 @@ function onAppClick(event) {
   if (el.matches(".cq-overlay")) {
     state.ui.query = null;
     state.ui.backup = null;
+    state.ui.importChoice = null;
     render();
     return;
   }
@@ -321,7 +322,10 @@ function handleAction(target, event) {
   if (action === "delete-pages") return deletePages();
   if (action === "print-page") return openPrintPage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "export-deck") return exportSelectedDeck();
-  if (action === "import-deck") return importDecksFlow();
+  if (action === "import-deck") return importBackupsFlow();
+  if (action === "import-choice-close") { state.ui.importChoice = null; return render(); }
+  if (action === "import-as-newbook") return importAsNewBook();
+  if (action === "import-into-book") return importIntoBook(target.dataset.bookId);
   if (action === "import-pages") return importPagesFlow();
 
   if (action === "open-backup") return openBackup();
@@ -1511,18 +1515,31 @@ function importPagesFlow() {
   input.click();
 }
 
-function importDecksFlow() {
+// Import backups. Several files → each restored as a new book (no prompt). A
+// single file → ask whether to make a new book or fold its 课文 into an existing
+// one (see the import-choice dialog).
+function importBackupsFlow() {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "application/json,.json";
+  input.multiple = true;
   input.addEventListener("change", async () => {
-    const file = input.files?.[0];
-    if (!file) return;
+    const files = [...(input.files || [])];
+    if (!files.length) return;
     try {
-      await importData(file);
-      clearTransient();
-      state.ui.deckPickerOpen = false;
-      render();
+      if (files.length > 1) {
+        const count = await importBackups(files);
+        clearTransient();
+        state.ui.deckPickerOpen = false;
+        render();
+        window.alert(`已导入 ${count} 本课本。`);
+      } else {
+        const env = await parseBackupFile(files[0]);
+        closeFloaters();
+        state.ui.deckPickerOpen = false;
+        state.ui.importChoice = { open: true, env };
+        render();
+      }
     } catch (error) {
       window.alert(`导入失败：${error.message}`);
     }
@@ -1530,13 +1547,32 @@ function importDecksFlow() {
   input.click();
 }
 
+function importAsNewBook() {
+  const env = state.ui.importChoice?.env;
+  if (!env) return;
+  addBackupAsNewBook(env);
+  state.ui.importChoice = null;
+  clearTransient();
+  render();
+}
+
+function importIntoBook(bookId) {
+  const env = state.ui.importChoice?.env;
+  if (!env || !bookId) return;
+  addBackupToBook(env, bookId);
+  state.ui.importChoice = null;
+  clearTransient();
+  render();
+}
+
 // --- Global (document-level) listeners -------------------------------------
 
 function onDocumentKeyDown(event) {
   if (event.key === "Escape") {
-    if (state.ui.query?.open || state.ui.backup?.open) {
+    if (state.ui.query?.open || state.ui.backup?.open || state.ui.importChoice?.open) {
       state.ui.query = null;
       state.ui.backup = null;
+      state.ui.importChoice = null;
       render();
       return;
     }

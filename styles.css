@@ -896,6 +896,10 @@ input:focus {
   background: rgba(33, 29, 26, 0.32);
 }
 
+.cq-dialog.cq-dialog-narrow {
+  width: min(460px, 100%);
+}
+
 .cq-dialog {
   display: flex;
   flex-direction: column;

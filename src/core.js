@@ -66,7 +66,9 @@ export const state = {
     annotating: false,
     annotationOriginalColors: {},
     zdictIndex: 0,
-    query: null
+    query: null,
+    backup: null,
+    importChoice: null
   }
 };
 

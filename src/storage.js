@@ -14,6 +14,7 @@ import {
   createPage,
   tokenizePage,
   ensureBookModel,
+  mergeLexicon,
   deepClone,
   id
 } from "./core.js";
@@ -164,35 +165,61 @@ export function touchDeck(deck = getActiveDeck()) {
 
 // --- Import / export -------------------------------------------------------
 
-function isValidPayload(value) {
-  if (!value || typeof value !== "object") return false;
-  if (!Array.isArray(value.decks) || !value.decks.length) return false;
-  return value.decks.every((deck) =>
-    deck && typeof deck === "object"
-    && typeof deck.id === "string"
-    && Array.isArray(deck.pages) && deck.pages.length > 0
-    && deck.pages.every((page) =>
-      page && typeof page === "object"
-      && typeof page.id === "string"
-      && typeof page.mainText === "string")
-  );
+// Normalize a parsed backup file into a { title, lexicon, texts } envelope.
+// Accepts the current yuwen-backup shape and the legacy { decks:[…] } backup
+// (whose per-课文 lexicons are merged into a single book lexicon). Returns null
+// when the shape is unrecognized.
+function toEnvelope(parsed) {
+  if (parsed && parsed.format === "yuwen-backup" && parsed.book && Array.isArray(parsed.book.texts)) {
+    return {
+      title: typeof parsed.book.title === "string" && parsed.book.title.trim() ? parsed.book.title : "导入的课本",
+      lexicon: (parsed.book.lexicon && typeof parsed.book.lexicon === "object") ? parsed.book.lexicon : {},
+      texts: parsed.book.texts
+    };
+  }
+  if (parsed && Array.isArray(parsed.decks) && parsed.decks.length) {
+    const lexicon = {};
+    parsed.decks.forEach((deck) => { if (deck && deck.lexicon) mergeLexicon(lexicon, deck.lexicon); });
+    return { title: "导入的课本", lexicon, texts: parsed.decks };
+  }
+  return null;
 }
 
-// Drop image sources that are not inline data: URLs so an imported file cannot
-// smuggle in remote or script URLs.
-function sanitizeImages(payload) {
+function isValidTexts(texts) {
+  return Array.isArray(texts) && texts.length > 0 && texts.every((text) =>
+    text && typeof text === "object"
+    && Array.isArray(text.pages) && text.pages.length > 0
+    && text.pages.every((page) => page && typeof page === "object" && typeof page.mainText === "string"));
+}
+
+// Drop image sources that are not inline data: URLs (both page配图 and lexicon
+// images) so an imported file cannot smuggle in remote or script URLs.
+function sanitizeEnvelope(env) {
   const safe = (images) => Array.isArray(images)
     ? images.filter((image) => image && typeof image.src === "string" && image.src.startsWith("data:image/"))
     : [];
-  payload.decks.forEach((deck) => {
-    deck.pages?.forEach((page) => { page.images = safe(page.images); });
-    if (deck.lexicon && typeof deck.lexicon === "object") {
-      Object.values(deck.lexicon).forEach((entry) => {
-        if (entry && typeof entry === "object") entry.images = safe(entry.images);
-      });
-    }
+  env.texts.forEach((text) => text.pages?.forEach((page) => { page.images = safe(page.images); }));
+  Object.values(env.lexicon || {}).forEach((entry) => {
+    if (entry && typeof entry === "object") entry.images = safe(entry.images);
   });
-  return payload;
+  return env;
+}
+
+// Deep-clone imported 课文 with fresh ids so an import never collides with, or
+// mutates, existing data. Any legacy per-课文 lexicon is dropped (already folded
+// into the book lexicon by toEnvelope).
+function cloneTextsFresh(texts) {
+  return texts.map((source) => {
+    const deck = deepClone(source);
+    deck.id = id("deck");
+    deck.updatedAt = Date.now();
+    delete deck.lexicon;
+    deck.pages?.forEach((page) => {
+      page.id = id("page");
+      page.tokens?.forEach((token) => { token.id = id("tok"); });
+    });
+    return deck;
+  });
 }
 
 // Export a single deck to its own JSON file (same payload shape as a full
@@ -279,35 +306,70 @@ export function exportBackup(deckIds) {
   return files;
 }
 
-// Append imported decks as new decks (with fresh ids) so importing never
-// overwrites the existing library. Returns the first imported deck.
-// Phase ① placeholder: import a legacy backup ({decks:[…]}) as one new book.
-// The proper backup import (yuwen-backup envelope + target-book choice) lands in
-// a later phase and will replace this.
-function appendImportedDecks(stored) {
-  const texts = stored.decks.map((source) => {
-    const deck = deepClone(source);
-    deck.id = id("deck");
-    deck.updatedAt = Date.now();
-    deck.pages?.forEach((page) => {
-      page.id = id("page");
-      page.tokens?.forEach((token) => { token.id = id("tok"); });
-    });
-    return deck;
-  });
+// Parse + validate + sanitize a single backup file into an envelope. Throws a
+// user-facing error naming the file when it is not a valid backup.
+export async function parseBackupFile(file) {
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch {
+    throw new Error(`文件「${file.name}」不是有效的 JSON。`);
+  }
+  const env = toEnvelope(parsed);
+  if (!env || !isValidTexts(env.texts)) {
+    throw new Error(`文件「${file.name}」不是有效的 yuwen 备份。`);
+  }
+  return sanitizeEnvelope(env);
+}
+
+function activateBook(book) {
+  state.activeBookId = book.id;
+  state.activeDeckId = book.texts[0].id;
+  state.activePageId = book.texts[0].pages[0].id;
+}
+
+// Import an envelope as a brand-new book (fresh ids). Switches to it.
+export function addBackupAsNewBook(env) {
   const book = {
     id: id("book"),
-    title: "导入的课本",
+    title: env.title,
     updatedAt: Date.now(),
-    lexicon: {},
-    texts
+    lexicon: deepClone(env.lexicon || {}),
+    texts: cloneTextsFresh(env.texts)
   };
   book.texts.forEach((deck) => deck.pages.forEach(tokenizePage));
   ensureBookModel(book);
   state.books.push(book);
+  activateBook(book);
+  saveState();
+  return book;
+}
+
+// Insert an envelope's 课文 into an existing book, merging its lexicon by 字|拼音.
+export function addBackupToBook(env, bookId) {
+  const book = state.books.find((item) => item.id === bookId);
+  if (!book) return null;
+  const texts = cloneTextsFresh(env.texts);
+  texts.forEach((deck) => deck.pages.forEach(tokenizePage));
+  book.texts.push(...texts);
+  book.lexicon ||= {};
+  mergeLexicon(book.lexicon, env.lexicon || {});
+  ensureBookModel(book);
+  book.updatedAt = Date.now();
   state.activeBookId = book.id;
-  state.activeDeckId = book.texts[0].id;
-  state.activePageId = book.texts[0].pages[0].id;
+  state.activeDeckId = texts[0].id;
+  state.activePageId = texts[0].pages[0].id;
+  saveState();
+  return book;
+}
+
+// Import several backup files at once — each becomes a new book. Returns count.
+export async function importBackups(files) {
+  const envelopes = [];
+  for (const file of files) envelopes.push(await parseBackupFile(file));
+  const first = envelopes.map((env) => addBackupAsNewBook(env))[0];
+  if (first) { activateBook(first); saveState(); }
+  return envelopes.length;
 }
 
 // Import a "yuwen-pages" file: append each page to the CURRENT deck. yuwen
@@ -377,17 +439,3 @@ export async function importPages(file) {
   return created.length;
 }
 
-export async function importData(file) {
-  const text = await file.text();
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error("文件不是有效的 JSON。");
-  }
-  if (!isValidPayload(parsed)) {
-    throw new Error("文件结构不符合 yuwen 讲义格式。");
-  }
-  appendImportedDecks(sanitizeImages(parsed));
-  saveState();
-}
