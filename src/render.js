@@ -1,6 +1,10 @@
 // View layer: builds the markup for the current state and writes it into #app.
 // Rendering stays a pure innerHTML pass; event wiring lives in events.js and is
 // attached once via delegation, so render() never re-binds listeners.
+//
+// 所有模板都用 html`` 标签模板拼装：插值**默认经 HTML 转义**，只有 html`` 自身
+// 产出的 SafeHtml（及其数组）原样拼接。这把"必须记得调 escapeHtml"的约定变成
+// 结构保证——忘了也不会引入 XSS。需要人工放行原始字符串时用 rawHtml()（当前无人用）。
 
 import {
   COLORS,
@@ -31,21 +35,43 @@ export function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+const RAW = Symbol("safeHtml");
+
+export function rawHtml(value) {
+  return { [RAW]: true, s: String(value) };
+}
+
+function isSafe(value) {
+  return typeof value === "object" && value !== null && RAW in value;
+}
+
+// 插值规则：null/undefined/false → 空；SafeHtml → 原样；数组 → 逐项递归拼接；
+// 其余（字符串/数字/布尔 true）→ 转义。escapeHtml 会转义引号，双引号属性值安全。
+function toHtml(value) {
+  if (value == null || value === false) return "";
+  if (isSafe(value)) return value.s;
+  if (Array.isArray(value)) return value.map(toHtml).join("");
+  return escapeHtml(value);
+}
+
+export function html(strings, ...values) {
+  let out = strings[0];
+  for (let i = 0; i < values.length; i++) out += toHtml(values[i]) + strings[i + 1];
+  return rawHtml(out);
+}
+
 function renderHighlightedText(value, highlightChar) {
-  return [...String(value || "")].map((char) => {
-    const escaped = escapeHtml(char);
-    if (highlightChar && char === highlightChar) {
-      return `<span class="inline-highlight">${escaped}</span>`;
-    }
-    return escaped;
-  }).join("");
+  return [...String(value || "")].map((char) =>
+    (highlightChar && char === highlightChar)
+      ? html`<span class="inline-highlight">${char}</span>`
+      : html`${char}`);
 }
 
 function renderHighlightedSet(value, charSet) {
-  return [...String(value || "")].map((char) => {
-    const escaped = escapeHtml(char);
-    return charSet.has(char) ? `<span class="inline-highlight">${escaped}</span>` : escaped;
-  }).join("");
+  return [...String(value || "")].map((char) =>
+    charSet.has(char)
+      ? html`<span class="inline-highlight">${char}</span>`
+      : html`${char}`);
 }
 
 export function render() {
@@ -61,7 +87,7 @@ export function render() {
   const prevPanelScroll = app.querySelector(".pages-panel")?.scrollTop ?? 0;
   const prevListScroll = app.querySelector(".page-list")?.scrollLeft ?? 0;
 
-  app.innerHTML = `
+  app.innerHTML = html`
     <div class="app-shell ${state.ui.chromeCollapsed ? "is-collapsed" : ""}" style="--annotation-color:${colorValue(state.ui.annotationColor || "red")}">
       ${state.ui.chromeCollapsed ? renderCollapsed(page) : renderFullShell(deck, page, { longText })}
       ${renderNavigator()}
@@ -74,7 +100,7 @@ export function render() {
       ${renderBackup()}
       ${renderImportChoice()}
     </div>
-  `;
+  `.s;
 
   const panel = app.querySelector(".pages-panel");
   if (panel) panel.scrollTop = prevPanelScroll;
@@ -98,7 +124,7 @@ function focusAutofocusField() {
 
 function renderCollapsed(page) {
   const longText = [...page.mainText].length > 18 || page.mainText.includes("\n");
-  return `
+  return html`
     <button class="floating-restore" data-action="toggle-chrome">显示控制栏</button>
     <main class="stage">
       <div class="workspace">${renderLesson(page, { longText })}</div>
@@ -108,27 +134,27 @@ function renderCollapsed(page) {
 
 function renderFullShell(deck, page, flags) {
   const book = getActiveBook();
-  return `
+  return html`
     <header class="topbar">
       <div class="brand"><strong>语文</strong><span>yǔwén</span></div>
       <div class="toolbar-group">
         <button data-action="toggle-deck-picker">课本</button>
-        <span class="active-deck-title" title="${escapeHtml(book.title)} › ${escapeHtml(deck.title)}">${escapeHtml(book.title)}<span class="crumb-sep">›</span>${escapeHtml(deck.title)}</span>
+        <span class="active-deck-title" title="${book.title} › ${deck.title}">${book.title}<span class="crumb-sep">›</span>${deck.title}</span>
         <button title="按部首查字并导出" data-action="open-charquery">查字</button>
       </div>
       <div class="toolbar-group">
-        <label class="toggle"><input type="checkbox" data-action="toggle-pinyin" ${deck.settings.showPinyin ? "checked" : ""}> 拼音</label>
-        <label class="toggle"><input type="checkbox" data-action="toggle-zdict-examples" ${deck.settings.showZdictExamples ? "checked" : ""}> 字库例句</label>
+        <label class="toggle"><input type="checkbox" data-action="toggle-pinyin" ${deck.settings.showPinyin ? rawHtml("checked") : ""}> 拼音</label>
+        <label class="toggle"><input type="checkbox" data-action="toggle-zdict-examples" ${deck.settings.showZdictExamples ? rawHtml("checked") : ""}> 字库例句</label>
         <button data-action="scale-down">A-</button>
         <button data-action="scale-reset">A0</button>
         <button data-action="scale-up">A+</button>
         <button data-action="edit-main">${state.ui.editingMain ? "完成正文" : "编辑正文"}</button>
-        <label class="toggle"><input type="checkbox" data-action="toggle-text-only" ${page.textOnly ? "checked" : ""}> 全文页</label>
+        <label class="toggle"><input type="checkbox" data-action="toggle-text-only" ${page.textOnly ? rawHtml("checked") : ""}> 全文页</label>
         <button data-action="speak" disabled title="朗读暂不可用">朗读</button>
         <button data-action="toggle-chrome">最大化</button>
       </div>
       <div class="toolbar-spacer"></div>
-      ${state.ui.annotating && state.ui.annotationColor ? `<span class="annotation-pill">Option/Alt 点击上色：${COLORS.find((color) => color.key === state.ui.annotationColor)?.label}</span>` : ""}
+      ${state.ui.annotating && state.ui.annotationColor ? html`<span class="annotation-pill">Option/Alt 点击上色：${COLORS.find((color) => color.key === state.ui.annotationColor)?.label}</span>` : ""}
     </header>
     <aside class="pages-panel">
       <div class="panel-head">
@@ -139,7 +165,7 @@ function renderFullShell(deck, page, flags) {
         </div>
       </div>
       <div class="page-list">
-        ${deck.pages.map((item, index) => renderPageItem(item, index)).join("")}
+        ${deck.pages.map((item, index) => renderPageItem(item, index))}
       </div>
     </aside>
     <main class="stage">
@@ -152,7 +178,7 @@ function renderFullShell(deck, page, flags) {
 // books can be toggled open. Opening a 课文 switches the single active deck.
 function renderNavigator() {
   if (!state.ui.deckPickerOpen || state.ui.chromeCollapsed) return "";
-  return `
+  return html`
     <div class="deck-popover nav-popover">
       <div class="deck-popover-head">
         <span>课本</span>
@@ -163,7 +189,7 @@ function renderNavigator() {
         </span>
       </div>
       <div class="nav-list">
-        ${state.books.map(renderBookGroup).join("")}
+        ${state.books.map(renderBookGroup)}
       </div>
     </div>
   `;
@@ -174,24 +200,24 @@ function renderBookGroup(book) {
   // active one — can be collapsed. The active book is seeded into that list when
   // it becomes active (see expandBook), so it still opens by default.
   const expanded = (state.ui.expandedBookIds || []).includes(book.id);
-  return `
+  return html`
     <div class="nav-book ${book.id === state.activeBookId ? "is-active-book" : ""}">
       <div class="nav-book-head" data-action="toggle-book" data-book-id="${book.id}" role="button" tabindex="0">
         <span class="nav-twisty">${expanded ? "▾" : "▸"}</span>
-        <span class="nav-book-title" title="${escapeHtml(book.title)}">${escapeHtml(book.title)}</span>
+        <span class="nav-book-title" title="${book.title}">${book.title}</span>
         <span class="deck-meta">${book.texts.length} 课</span>
         <button class="nav-add" title="在本书新建课文" data-action="new-deck" data-book-id="${book.id}">＋</button>
       </div>
-      ${expanded ? `<div class="nav-texts">${book.texts.map((deck) => renderNavText(book, deck)).join("")}</div>` : ""}
+      ${expanded ? html`<div class="nav-texts">${book.texts.map((deck) => renderNavText(book, deck))}</div>` : ""}
     </div>
   `;
 }
 
 function renderNavText(book, deck) {
   const active = deck.id === state.activeDeckId && book.id === state.activeBookId;
-  return `
+  return html`
     <button class="deck-item nav-text ${active ? "is-active" : ""}" data-deck-id="${deck.id}" data-book-id="${book.id}">
-      <span class="deck-title">${escapeHtml(deck.title)}</span>
+      <span class="deck-title">${deck.title}</span>
       <span class="deck-meta">${deck.pages.length} 页${deck.updatedAt ? ` · ${nowLabel(deck.updatedAt)}` : ""}</span>
     </button>
   `;
@@ -203,17 +229,17 @@ function renderPageItem(page, index) {
   // single selection still reads as just the active page.
   const selected = selectedIds.length > 1 && selectedIds.includes(page.id) ? "is-selected" : "";
   const active = page.id === state.activePageId ? "is-active" : "";
-  return `
+  return html`
     <div class="page-item ${active} ${selected}" data-page-id="${page.id}" role="button" tabindex="0" draggable="true">
       <span class="page-number">${index + 1}</span>
-      <span class="page-preview">${escapeHtml(page.mainText || "空白页面")}</span>
+      <span class="page-preview">${page.mainText || "空白页面"}</span>
     </div>
   `;
 }
 
 function renderLesson(page, { longText }) {
   if (page.textOnly) {
-    return `
+    return html`
       <section class="lesson-page text-only-page">
         <div class="lesson-grid text-only-grid" style="--main-color:${colorValue(page.styles.mainTextColor)};--main-scale:${page.mainTextScale}">
           ${renderMainZone(page, longText)}
@@ -222,7 +248,7 @@ function renderLesson(page, { longText }) {
     `;
   }
 
-  return `
+  return html`
     <section class="lesson-page">
       <div class="lesson-grid" style="--main-color:${colorValue(page.styles.mainTextColor)};--main-scale:${page.mainTextScale}">
         ${renderMainZone(page, longText)}
@@ -235,14 +261,14 @@ function renderLesson(page, { longText }) {
 
 function renderMainZone(page, longText) {
   if (state.ui.editingMain) {
-    return `
+    return html`
       <section class="main-zone" data-blank="main">
-        <textarea class="main-editor" data-draft="main-text" autofocus>${escapeHtml(page.mainText)}</textarea>
+        <textarea class="main-editor" data-draft="main-text" autofocus>${page.mainText}</textarea>
       </section>
     `;
   }
 
-  return `
+  return html`
     <section class="main-zone ${longText ? "is-long-text" : ""}" data-blank="main">
       <div class="main-text">${renderMainText(page)}</div>
     </section>
@@ -251,30 +277,30 @@ function renderMainZone(page, longText) {
 
 function renderMainText(page) {
   if (!page.mainText.trim()) {
-    return `<span class="zone-empty-hint">点击“编辑正文”输入文字</span>`;
+    return html`<span class="zone-empty-hint">点击“编辑正文”输入文字</span>`;
   }
 
   const tokensByIndex = new Map(page.tokens.map((token) => [token.index, token]));
+  const pinyinVisible = getActiveDeck().settings.showPinyin;
   return [...page.mainText].map((char, index) => {
     const token = tokensByIndex.get(index);
-    if (!token) return `<span class="plain-char">${escapeHtml(char)}</span>`;
-    const pinyinVisible = getActiveDeck().settings.showPinyin;
+    if (!token) return html`<span class="plain-char">${char}</span>`;
     const color = token.color ? `--token-color:${colorValue(token.color)}` : "";
     const active = token.id === state.ui.activeTokenId ? "is-active" : "";
     const optionReady = state.ui.annotating && state.ui.annotationColor ? "option-ready" : "";
-    return `
+    return html`
       <span class="token ${active} ${optionReady}" data-token-id="${token.id}" style="${color}">
-        ${pinyinVisible ? `<span class="pinyin ${token.pinyinCandidates.length > 1 ? "is-polyphonic" : ""}" data-pinyin-token-id="${token.id}" title="${token.pinyinCandidates.length > 1 ? "点击切换读音" : ""}">${escapeHtml(token.pinyin)}</span>` : ""}
-        <span class="hanzi-char">${escapeHtml(char)}</span>
+        ${pinyinVisible ? html`<span class="pinyin ${token.pinyinCandidates.length > 1 ? "is-polyphonic" : ""}" data-pinyin-token-id="${token.id}" title="${token.pinyinCandidates.length > 1 ? "点击切换读音" : ""}">${token.pinyin}</span>` : ""}
+        <span class="hanzi-char">${char}</span>
       </span>
     `;
-  }).join("");
+  });
 }
 
 function renderExampleZone(page) {
   const { deck, token, entry } = activeContext();
   if (!token) {
-    return `
+    return html`
       <section class="example-zone">
         <div class="example-content"></div>
       </section>
@@ -287,11 +313,11 @@ function renderExampleZone(page) {
     const meanings = lookupZdictMeanings(token.text, token.pinyin);
     if (meanings.length) {
       const idx = Math.min(Math.max(state.ui.zdictIndex || 0, 0), meanings.length - 1);
-      return `
+      return html`
         <section class="example-zone">
           <div class="zone-controls">
             <button data-action="add-example">+</button>
-            ${meanings.length > 1 ? `
+            ${meanings.length > 1 ? html`
               <button data-action="prev-zdict">‹</button>
               <button data-action="next-zdict">›</button>
             ` : ""}
@@ -310,21 +336,21 @@ function renderExampleZone(page) {
   const current = state.ui.pendingExample ? { text: "" } : examples[currentIndex] || { text: "" };
   const editingExample = state.ui.pendingExample || (current.id && state.ui.editingExampleId === current.id);
 
-  return `
+  return html`
     <section class="example-zone">
       <div class="zone-controls">
         <button data-action="add-example">+</button>
-        ${examples.length ? `
-          <button data-action="prev-example" ${examples.length < 2 ? "disabled" : ""}>‹</button>
-          <button data-action="next-example" ${examples.length < 2 ? "disabled" : ""}>›</button>
+        ${examples.length ? html`
+          <button data-action="prev-example" ${examples.length < 2 ? rawHtml("disabled") : ""}>‹</button>
+          <button data-action="next-example" ${examples.length < 2 ? rawHtml("disabled") : ""}>›</button>
           <button data-action="hide-example" title="只在当前位置隐藏">藏</button>
-          <button data-action="delete-example" title="从本讲义共享素材中删除">删</button>
+          <button data-action="delete-example" title="从本课本共享素材中删除">删</button>
           <button data-action="copy-prompt" title="生成并复制图片提示词">提示词</button>
         ` : ""}
       </div>
       <div class="example-content">
-        ${editingExample ? `<textarea data-draft="example" data-example-id="${current.id || ""}" autofocus>${escapeHtml(current.text || "")}</textarea>` : ""}
-        ${!editingExample && current.text ? `<button class="text-display example-display" data-action="edit-example">${renderHighlightedText(current.text, token.text)}</button>` : ""}
+        ${editingExample ? html`<textarea data-draft="example" data-example-id="${current.id || ""}" autofocus>${current.text || ""}</textarea>` : ""}
+        ${!editingExample && current.text ? html`<button class="text-display example-display" data-action="edit-example">${renderHighlightedText(current.text, token.text)}</button>` : ""}
       </div>
     </section>
   `;
@@ -338,7 +364,7 @@ function renderImageZone(page) {
   const editingCaption = current.id && state.ui.editingCaptionId === current.id;
 
   if (!images.length) {
-    return `
+    return html`
       <section class="image-zone">
         <div class="zone-controls">
           <button data-action="add-image" title="添加${context.label}">+</button>
@@ -348,24 +374,24 @@ function renderImageZone(page) {
     `;
   }
 
-  return `
+  return html`
     <section class="image-zone">
       <div class="zone-controls">
-        <button data-action="prev-image" ${images.length < 2 ? "disabled" : ""}>‹</button>
-        <button data-action="next-image" ${images.length < 2 ? "disabled" : ""}>›</button>
+        <button data-action="prev-image" ${images.length < 2 ? rawHtml("disabled") : ""}>‹</button>
+        <button data-action="next-image" ${images.length < 2 ? rawHtml("disabled") : ""}>›</button>
         <button data-action="add-image">+</button>
-        ${context.canHide ? `<button data-action="hide-image" title="只在当前位置隐藏">藏</button>` : ""}
-        <button data-action="delete-image" title="${context.scope === "token" ? "从本讲义共享素材中删除" : "删除当前页面配图"}">删</button>
+        ${context.canHide ? html`<button data-action="hide-image" title="只在当前位置隐藏">藏</button>` : ""}
+        <button data-action="delete-image" title="${context.scope === "token" ? "从本课本共享素材中删除" : "删除当前页面配图"}">删</button>
       </div>
       <div class="image-frame">
         <div class="image-box" data-image-box-id="${current.id}" style="width:${current.widthPercent || 86}%">
-          <img src="${escapeHtml(current.src)}" alt="${escapeHtml(current.caption || "讲义图片")}" draggable="false">
+          <img src="${current.src}" alt="${current.caption || "讲义图片"}" draggable="false">
           <button class="image-resize-handle" data-resize-image-id="${current.id}" title="拖拽调整图片大小" aria-label="拖拽调整图片大小"></button>
         </div>
       </div>
       <div class="caption">
-        ${editingCaption ? `<textarea data-draft="caption" data-image-id="${current.id}" autofocus>${escapeHtml(current.caption || "")}</textarea>` : ""}
-        ${!editingCaption ? `<button class="text-display caption-display" data-action="edit-caption" data-image-id="${current.id}" aria-label="编辑图片说明">${renderHighlightedText(current.caption, token?.text)}</button>` : ""}
+        ${editingCaption ? html`<textarea data-draft="caption" data-image-id="${current.id}" autofocus>${current.caption || ""}</textarea>` : ""}
+        ${!editingCaption ? html`<button class="text-display caption-display" data-action="edit-caption" data-image-id="${current.id}" aria-label="编辑图片说明">${renderHighlightedText(current.caption, token?.text)}</button>` : ""}
       </div>
     </section>
   `;
@@ -376,17 +402,17 @@ function renderContextMenu() {
   const { token } = activeContext();
   const isTextOnly = getActivePage().textOnly;
   const hasHidden = Boolean(token && ((token.hiddenExamples?.length || 0) + (token.hiddenImages?.length || 0)));
-  return `
+  return html`
     <div class="context-menu" style="left:${state.ui.menu.x}px;top:${state.ui.menu.y}px">
       <div class="swatches">
-        ${COLORS.map((color) => `
+        ${COLORS.map((color) => html`
           <button class="swatch" title="${color.label}" data-action="token-color" data-color="${color.key}" style="background:${color.value}"></button>
-        `).join("")}
+        `)}
       </div>
       <button class="menu-item" data-action="speak-token">朗读</button>
-      ${!isTextOnly ? `<button class="menu-item" data-action="add-example">添加例词/例句</button>` : ""}
-      ${!isTextOnly ? `<button class="menu-item" data-action="add-image">添加图片</button>` : ""}
-      ${!isTextOnly && hasHidden ? `<button class="menu-item" data-action="restore-hidden">恢复隐藏内容</button>` : ""}
+      ${!isTextOnly ? html`<button class="menu-item" data-action="add-example">添加例词/例句</button>` : ""}
+      ${!isTextOnly ? html`<button class="menu-item" data-action="add-image">添加图片</button>` : ""}
+      ${!isTextOnly && hasHidden ? html`<button class="menu-item" data-action="restore-hidden">恢复隐藏内容</button>` : ""}
       <button class="menu-item" data-action="clear-token-color">清除该字颜色</button>
     </div>
   `;
@@ -394,7 +420,7 @@ function renderContextMenu() {
 
 function renderBookContextMenu() {
   if (!state.ui.bookContext) return "";
-  return `
+  return html`
     <div class="context-menu" style="left:${state.ui.bookContext.x}px;top:${state.ui.bookContext.y}px">
       <button class="menu-item" data-action="new-deck">新建课文</button>
       <button class="menu-item" data-action="rename-book">重命名课本</button>
@@ -405,7 +431,7 @@ function renderBookContextMenu() {
 
 function renderDeckContextMenu() {
   if (!state.ui.deckContext) return "";
-  return `
+  return html`
     <div class="context-menu" style="left:${state.ui.deckContext.x}px;top:${state.ui.deckContext.y}px">
       <button class="menu-item" data-action="rename-deck">重命名课文</button>
       <button class="menu-item" data-action="copy-deck">复制课文</button>
@@ -420,13 +446,13 @@ function renderPageContextMenu() {
   // When 2+ pages are selected and the right-click landed on one of them, offer
   // a single batch-delete action instead of the per-page menu.
   if (selectedIds.length > 1 && selectedIds.includes(state.ui.pageContext.pageId)) {
-    return `
+    return html`
       <div class="context-menu" style="left:${state.ui.pageContext.x}px;top:${state.ui.pageContext.y}px">
         <button class="menu-item" data-action="delete-pages">删除选中的 ${selectedIds.length} 个页面</button>
       </div>
     `;
   }
-  return `
+  return html`
     <div class="context-menu" style="left:${state.ui.pageContext.x}px;top:${state.ui.pageContext.y}px">
       <button class="menu-item" data-action="print-page" data-page-id="${state.ui.pageContext.pageId}">打印页面…</button>
       <button class="menu-item" data-action="copy-page" data-page-id="${state.ui.pageContext.pageId}">复制页面</button>
@@ -444,7 +470,7 @@ function renderCharQuery() {
   const stepLabel = isPage
     ? { 3: "选择单字", 4: "预览导出" }[query.step]
     : { 1: "①选择课文", 2: "②选择部首", 3: "③选择单字", 4: "④预览导出" }[query.step];
-  return `
+  return html`
     <div class="cq-overlay">
       <div class="cq-dialog">
         <div class="cq-head">
@@ -463,40 +489,21 @@ function renderCharQueryStep(query) {
     const selected = new Set(query.deckIds || []);
     const expanded = new Set(query.expandedBooks || []);
     const allSelected = total > 0 && query.deckIds.length === total;
-    return `
+    return html`
       <div class="cq-toolbar">
         <button data-action="charquery-decks-all">${allSelected ? "全不选" : "全选"}</button>
         <span class="cq-dim">已选 ${query.deckIds.length} / ${total} 篇课文（勾课本＝选整本）</span>
       </div>
       <div class="cq-list cq-tree">
-        ${state.books.map((book) => {
-          const selCount = book.texts.filter((deck) => selected.has(deck.id)).length;
-          const mark = selCount === 0 ? "☐" : (selCount === book.texts.length ? "☑" : "▣");
-          const isOpen = expanded.has(book.id);
-          return `
-            <div class="cq-book">
-              <div class="cq-row cq-book-row">
-                <button class="cq-check-btn" data-action="charquery-book-sel" data-book-id="${book.id}" aria-label="选择整本课本">${mark}</button>
-                <button class="cq-book-open" data-action="charquery-book-expand" data-book-id="${book.id}">
-                  <span class="cq-twisty">${isOpen ? "▾" : "▸"}</span>
-                  <span class="cq-row-title">${escapeHtml(book.title)}</span>
-                  <span class="cq-dim">${selCount}/${book.texts.length} 课</span>
-                </button>
-              </div>
-              ${isOpen ? `<div class="cq-texts">${book.texts.map((deck) => `
-                <button class="cq-row cq-text-row ${selected.has(deck.id) ? "is-sel" : ""}" data-action="charquery-deck" data-deck-id="${deck.id}">
-                  <span class="cq-check">${selected.has(deck.id) ? "☑" : "☐"}</span>
-                  <span class="cq-row-title">${escapeHtml(deck.title)}</span>
-                  <span class="cq-dim">${deck.pages.length} 页</span>
-                </button>
-              `).join("")}</div>` : ""}
-            </div>
-          `;
-        }).join("")}
+        ${state.books.map((book) => renderSelectionBook(book, selected, expanded, {
+          checkAction: "charquery-book-sel",
+          expandAction: "charquery-book-expand",
+          deckAction: "charquery-deck"
+        }))}
       </div>
       <div class="cq-foot">
         <span></span>
-        <button class="cq-primary" data-action="charquery-next" ${query.deckIds.length ? "" : "disabled"}>下一步 →</button>
+        <button class="cq-primary" data-action="charquery-next" ${query.deckIds.length ? "" : rawHtml("disabled")}>下一步 →</button>
       </div>
     `;
   }
@@ -506,19 +513,19 @@ function renderCharQueryStep(query) {
     const present = radicals.map((item) => item.radical);
     const allSelected = present.length > 0 && present.every((radical) => query.radicals.includes(radical));
     const chosen = query.radicals.filter((radical) => present.includes(radical));
-    return `
+    return html`
       <div class="cq-toolbar">
         <button data-action="charquery-radicals-all">${allSelected ? "全不选" : "全选"}</button>
         <span class="cq-dim">基于 ${query.deckIds.length} 册 · 已选 ${chosen.length} / ${present.length} 个部首</span>
       </div>
       <div class="cq-chips">
-        ${radicals.length ? radicals.map((item) => `
-          <button class="cq-chip ${query.radicals.includes(item.radical) ? "is-sel" : ""}" data-action="charquery-radical" data-radical="${escapeHtml(item.radical)}">${escapeHtml(item.radical)} <span class="cq-dim">${item.count}</span></button>
-        `).join("") : `<span class="cq-dim">所选讲义中没有可识别部首的字。</span>`}
+        ${radicals.length ? radicals.map((item) => html`
+          <button class="cq-chip ${query.radicals.includes(item.radical) ? "is-sel" : ""}" data-action="charquery-radical" data-radical="${item.radical}">${item.radical} <span class="cq-dim">${item.count}</span></button>
+        `) : html`<span class="cq-dim">所选课文中没有可识别部首的字。</span>`}
       </div>
       <div class="cq-foot">
         <button data-action="charquery-back">← 上一步</button>
-        <button class="cq-primary" data-action="charquery-to-chars" ${chosen.length ? "" : "disabled"}>下一步 →</button>
+        <button class="cq-primary" data-action="charquery-to-chars" ${chosen.length ? "" : rawHtml("disabled")}>下一步 →</button>
       </div>
     `;
   }
@@ -530,7 +537,7 @@ function renderCharQueryStep(query) {
     const selected = new Set(query.chars || []);
     const allSelected = candidates.length > 0 && candidates.every((item) => selected.has(item.char));
     const chosen = candidates.filter((item) => selected.has(item.char)).length;
-    return `
+    return html`
       <div class="cq-toolbar">
         <button data-action="charquery-chars-all">${allSelected ? "全不选" : "全选"}</button>
         <span class="cq-sort">排序：
@@ -541,13 +548,13 @@ function renderCharQueryStep(query) {
         <span class="cq-dim">默认全选，点字可移除/恢复 · 已选 ${chosen} / ${candidates.length} 字</span>
       </div>
       <div class="cq-chips">
-        ${candidates.length ? candidates.map((item) => `
-          <button class="cq-chip ${selected.has(item.char) ? "is-sel" : ""}" data-action="charquery-char" data-char="${escapeHtml(item.char)}">${escapeHtml(item.char)} <span class="cq-dim">${item.count}</span></button>
-        `).join("") : `<span class="cq-dim">这一页没有可导出的字。</span>`}
+        ${candidates.length ? candidates.map((item) => html`
+          <button class="cq-chip ${selected.has(item.char) ? "is-sel" : ""}" data-action="charquery-char" data-char="${item.char}">${item.char} <span class="cq-dim">${item.count}</span></button>
+        `) : html`<span class="cq-dim">这一页没有可导出的字。</span>`}
       </div>
       <div class="cq-foot">
-        ${query.scope === "page" ? "<span></span>" : `<button data-action="charquery-back">← 上一步</button>`}
-        <button class="cq-primary" data-action="charquery-to-preview" ${chosen ? "" : "disabled"}>预览导出 →</button>
+        ${query.scope === "page" ? html`<span></span>` : html`<button data-action="charquery-back">← 上一步</button>`}
+        <button class="cq-primary" data-action="charquery-to-preview" ${chosen ? "" : rawHtml("disabled")}>预览导出 →</button>
       </div>
     `;
   }
@@ -555,31 +562,57 @@ function renderCharQueryStep(query) {
   const groups = groupByRadical(collectMatches(query.deckIds, new Set(query.chars || []), query.pageId || null));
   const total = groups.reduce((sum, group) => sum + group.items.length, 0);
   const uniqueCount = (query.chars || []).length;
-  return `
+  return html`
     <div class="cq-toolbar">
-      <label class="toggle"><input type="checkbox" data-action="charquery-include-pinyin" ${query.includePinyin ? "checked" : ""}> 包括拼音</label>
+      <label class="toggle"><input type="checkbox" data-action="charquery-include-pinyin" ${query.includePinyin ? rawHtml("checked") : ""}> 包括拼音</label>
       <span class="cq-dim">${uniqueCount} 字 · ${total} 处</span>
     </div>
     <div class="cq-preview">
-      ${groups.length ? groups.map((group) => `
+      ${groups.length ? groups.map((group) => html`
         <div class="cq-group">
-          <div class="cq-radical">${escapeHtml(group.radical)}</div>
-          ${mergeBySentence(group.items).map((block) => `
+          <div class="cq-radical">${group.radical}</div>
+          ${mergeBySentence(group.items).map((block) => html`
             <div class="cq-entry">
-              <div class="cq-entry-meta">${escapeHtml(headerLine(block, query.includePinyin))}</div>
+              <div class="cq-entry-meta">${headerLine(block, query.includePinyin)}</div>
               <div class="cq-entry-sent">${renderHighlightedSet(block.sentence, new Set(block.chars.map((item) => item.char)))}</div>
             </div>
-          `).join("")}
+          `)}
         </div>
-      `).join("") : `<span class="cq-dim">没有匹配的字。</span>`}
+      `) : html`<span class="cq-dim">没有匹配的字。</span>`}
     </div>
     <div class="cq-foot">
       <button data-action="charquery-back">← 上一步</button>
       <span class="cq-foot-actions">
-        <button data-action="charquery-print" ${total ? "" : "disabled"}>打印 Word</button>
-        <button data-action="charquery-export-word" ${total ? "" : "disabled"}>导出 Word</button>
-        <button class="cq-primary" data-action="charquery-export-zitie" ${uniqueCount ? "" : "disabled"}>导出字帖</button>
+        <button data-action="charquery-print" ${total ? "" : rawHtml("disabled")}>打印 Word</button>
+        <button data-action="charquery-export-word" ${total ? "" : rawHtml("disabled")}>导出 Word</button>
+        <button class="cq-primary" data-action="charquery-export-zitie" ${uniqueCount ? "" : rawHtml("disabled")}>导出字帖</button>
       </span>
+    </div>
+  `;
+}
+
+// 查字第 1 步与备份共用的「课本 → 课文」勾选树（动作名由调用方注入）。
+function renderSelectionBook(book, selected, expanded, actions) {
+  const selCount = book.texts.filter((deck) => selected.has(deck.id)).length;
+  const mark = selCount === 0 ? "☐" : (selCount === book.texts.length ? "☑" : "▣");
+  const isOpen = expanded.has(book.id);
+  return html`
+    <div class="cq-book">
+      <div class="cq-row cq-book-row">
+        <button class="cq-check-btn" data-action="${actions.checkAction}" data-book-id="${book.id}" aria-label="选择整本课本">${mark}</button>
+        <button class="cq-book-open" data-action="${actions.expandAction}" data-book-id="${book.id}">
+          <span class="cq-twisty">${isOpen ? "▾" : "▸"}</span>
+          <span class="cq-row-title">${book.title}</span>
+          <span class="cq-dim">${selCount}/${book.texts.length} 课</span>
+        </button>
+      </div>
+      ${isOpen ? html`<div class="cq-texts">${book.texts.map((deck) => html`
+        <button class="cq-row cq-text-row ${selected.has(deck.id) ? "is-sel" : ""}" data-action="${actions.deckAction}" data-deck-id="${deck.id}">
+          <span class="cq-check">${selected.has(deck.id) ? "☑" : "☐"}</span>
+          <span class="cq-row-title">${deck.title}</span>
+          <span class="cq-dim">${deck.pages.length} 页</span>
+        </button>
+      `)}</div>` : ""}
     </div>
   `;
 }
@@ -592,7 +625,7 @@ function renderBackup() {
   const expanded = new Set(backup.expandedBooks || []);
   const bookCount = state.books.filter((book) => book.texts.some((deck) => selected.has(deck.id))).length;
   const allSelected = total > 0 && backup.deckIds.length === total;
-  return `
+  return html`
     <div class="cq-overlay">
       <div class="cq-dialog">
         <div class="cq-head">
@@ -605,39 +638,18 @@ function renderBackup() {
             <span class="cq-dim">勾要备份的课本 / 课文（勾课本＝整本）· 已选 ${backup.deckIds.length}/${total} 篇 · ${bookCount} 本各存一个文件</span>
           </div>
           <div class="cq-list cq-tree">
-            ${state.books.map((book) => renderBackupBook(book, selected, expanded)).join("")}
+            ${state.books.map((book) => renderSelectionBook(book, selected, expanded, {
+              checkAction: "backup-book-sel",
+              expandAction: "backup-book-expand",
+              deckAction: "backup-deck"
+            }))}
           </div>
           <div class="cq-foot">
             <span class="cq-dim">多本课本＝多个文件（浏览器会提示允许多文件下载）</span>
-            <button class="cq-primary" data-action="backup-run" ${backup.deckIds.length ? "" : "disabled"}>备份${bookCount ? `（${bookCount} 个文件）` : ""}</button>
+            <button class="cq-primary" data-action="backup-run" ${backup.deckIds.length ? "" : rawHtml("disabled")}>备份${bookCount ? `（${bookCount} 个文件）` : ""}</button>
           </div>
         </div>
       </div>
-    </div>
-  `;
-}
-
-function renderBackupBook(book, selected, expanded) {
-  const selCount = book.texts.filter((deck) => selected.has(deck.id)).length;
-  const mark = selCount === 0 ? "☐" : (selCount === book.texts.length ? "☑" : "▣");
-  const isOpen = expanded.has(book.id);
-  return `
-    <div class="cq-book">
-      <div class="cq-row cq-book-row">
-        <button class="cq-check-btn" data-action="backup-book-sel" data-book-id="${book.id}" aria-label="选择整本课本">${mark}</button>
-        <button class="cq-book-open" data-action="backup-book-expand" data-book-id="${book.id}">
-          <span class="cq-twisty">${isOpen ? "▾" : "▸"}</span>
-          <span class="cq-row-title">${escapeHtml(book.title)}</span>
-          <span class="cq-dim">${selCount}/${book.texts.length} 课</span>
-        </button>
-      </div>
-      ${isOpen ? `<div class="cq-texts">${book.texts.map((deck) => `
-        <button class="cq-row cq-text-row ${selected.has(deck.id) ? "is-sel" : ""}" data-action="backup-deck" data-deck-id="${deck.id}">
-          <span class="cq-check">${selected.has(deck.id) ? "☑" : "☐"}</span>
-          <span class="cq-row-title">${escapeHtml(deck.title)}</span>
-          <span class="cq-dim">${deck.pages.length} 页</span>
-        </button>
-      `).join("")}</div>` : ""}
     </div>
   `;
 }
@@ -648,11 +660,11 @@ function renderImportChoice() {
   const choice = state.ui.importChoice;
   if (!choice?.open) return "";
   const count = choice.env.texts.length;
-  return `
+  return html`
     <div class="cq-overlay">
       <div class="cq-dialog cq-dialog-narrow">
         <div class="cq-head">
-          <span>导入备份 · 《${escapeHtml(choice.env.title)}》（${count} 篇课文）</span>
+          <span>导入备份 · 《${choice.env.title}》（${count} 篇课文）</span>
           <button class="cq-x" data-action="import-choice-close" aria-label="关闭">×</button>
         </div>
         <div class="cq-body">
@@ -661,12 +673,12 @@ function renderImportChoice() {
             <span class="cq-dim">或把这些课文插入现有课本 ↓</span>
           </div>
           <div class="cq-list">
-            ${state.books.map((book) => `
+            ${state.books.map((book) => html`
               <button class="cq-row" data-action="import-into-book" data-book-id="${book.id}">
-                <span class="cq-row-title">${escapeHtml(book.title)}</span>
+                <span class="cq-row-title">${book.title}</span>
                 <span class="cq-dim">${book.texts.length} 课 · 插入这里</span>
               </button>
-            `).join("")}
+            `)}
           </div>
         </div>
       </div>
@@ -679,11 +691,11 @@ function renderPinyinMenu() {
   const { page } = activeContext();
   const token = getToken(page, state.ui.pinyinMenu.tokenId);
   if (!token) return "";
-  return `
+  return html`
     <div class="pinyin-popover" style="left:${state.ui.pinyinMenu.x}px;top:${state.ui.pinyinMenu.y}px">
-      ${token.pinyinCandidates.map((item) => `
-        <button class="pinyin-option" data-action="choose-pinyin" data-token-id="${token.id}" data-pinyin="${escapeHtml(item)}">${escapeHtml(item)}</button>
-      `).join("")}
+      ${token.pinyinCandidates.map((item) => html`
+        <button class="pinyin-option" data-action="choose-pinyin" data-token-id="${token.id}" data-pinyin="${item}">${item}</button>
+      `)}
     </div>
   `;
 }
