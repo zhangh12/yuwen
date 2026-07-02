@@ -319,6 +319,7 @@ function handleAction(target, event) {
   if (action === "copy-page") return copyPage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "delete-page") return deletePage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "delete-pages") return deletePages();
+  if (action === "print-page") return openPrintPage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "export-deck") return exportSelectedDeck();
   if (action === "import-deck") return importDecksFlow();
   if (action === "import-pages") return importPagesFlow();
@@ -1319,6 +1320,26 @@ function openCharQuery() {
   render();
 }
 
+// 打印页面：复用查字机制，但范围锁定在当前页（scope:"page" + pageId），直接进
+// 「选择单字」步，默认全选；预览/导出（Word / 字帖）走同一套代码。
+function openPrintPage(pageId = state.activePageId) {
+  const deckId = state.activeDeckId;
+  const chars = charsInDecks([deckId], null, "freq", pageId).map((item) => item.char);
+  state.ui.query = {
+    open: true,
+    step: 3,
+    scope: "page",
+    deckIds: [deckId],
+    pageId,
+    radicals: [],
+    chars,
+    charSort: "freq",
+    includePinyin: true
+  };
+  closeFloaters();
+  render();
+}
+
 // Keep query.deckIds ordered like allTexts() so downstream steps stay stable.
 function setQueryDeckIds(idSet) {
   state.ui.query.deckIds = allTexts().map((deck) => deck.id).filter((id) => idSet.has(id));
@@ -1385,14 +1406,16 @@ function toggleQueryChar(char) {
 
 function toggleAllQueryChars() {
   const query = state.ui.query;
-  const all = charsInDecks(query.deckIds, query.radicals).map((item) => item.char);
+  const all = (query.scope === "page"
+    ? charsInDecks(query.deckIds, null, query.charSort, query.pageId)
+    : charsInDecks(query.deckIds, query.radicals)).map((item) => item.char);
   const allSelected = all.length > 0 && all.every((char) => query.chars.includes(char));
   query.chars = allSelected ? [] : all;
 }
 
 function currentQueryGroups() {
   const query = state.ui.query;
-  return groupByRadical(collectMatches(query.deckIds, new Set(query.chars || [])));
+  return groupByRadical(collectMatches(query.deckIds, new Set(query.chars || []), query.pageId || null));
 }
 
 // 字帖用的唯一字顺序 = 从上到下读 Word 文档时各字首次出现的顺序：

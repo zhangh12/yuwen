@@ -66,17 +66,21 @@ export function radicalsInDecks(deckIds) {
 // Unique characters across the given decks whose radical is in `radicals`,
 // each with its occurrence count, sorted by count desc then by character.
 // sortBy: "freq" (出现次数降序，默认) | "radical"（按部首归类，与 Word 导出的分组顺序一致）。
-export function charsInDecks(deckIds, radicals, sortBy = "freq") {
+// radicals: an array to filter by, or null/undefined to include every 汉字
+// (used by 打印页面, which wants all chars regardless of radical).
+// pageId: restrict to a single page when given.
+export function charsInDecks(deckIds, radicals, sortBy = "freq", pageId = null) {
   const ids = new Set(deckIds);
-  const wanted = new Set(radicals);
+  const wanted = radicals ? new Set(radicals) : null;
   const counts = new Map();
   allTexts().forEach((deck) => {
     if (!ids.has(deck.id)) return;
     deck.pages.forEach((page) => {
+      if (pageId && page.id !== pageId) return;
       for (const ch of String(page.mainText || "")) {
         if (!isHanzi(ch)) continue;
         const radical = lookupRadical(ch);
-        if (!radical || !wanted.has(radical)) continue;
+        if (wanted && !wanted.has(radical)) continue;
         counts.set(ch, (counts.get(ch) || 0) + 1);
       }
     });
@@ -95,13 +99,14 @@ export function charsInDecks(deckIds, radicals, sortBy = "freq") {
 }
 
 // `chars` is a Set of the characters to include (already chosen by the user).
-export function collectMatches(deckIds, chars) {
+export function collectMatches(deckIds, chars, pageId = null) {
   const ids = new Set(deckIds);
   const wanted = chars instanceof Set ? chars : new Set(chars);
   const entries = [];
   allTexts().forEach((deck, deckOrder) => {
     if (!ids.has(deck.id)) return;
     deck.pages.forEach((page, pageIndex) => {
+      if (pageId && page.id !== pageId) return;
       const { cps, clauses, clauseIndexOf } = buildClauses(page.mainText);
       const tokenByIndex = new Map((page.tokens || []).map((token) => [token.index, token]));
       const seen = new Set();

@@ -427,6 +427,7 @@ function renderPageContextMenu() {
   }
   return `
     <div class="context-menu" style="left:${state.ui.pageContext.x}px;top:${state.ui.pageContext.y}px">
+      <button class="menu-item" data-action="print-page" data-page-id="${state.ui.pageContext.pageId}">打印页面…</button>
       <button class="menu-item" data-action="copy-page" data-page-id="${state.ui.pageContext.pageId}">复制页面</button>
       <button class="menu-item" data-action="delete-page" data-page-id="${state.ui.pageContext.pageId}">删除页面</button>
     </div>
@@ -437,12 +438,16 @@ function renderCharQuery() {
   const query = state.ui.query;
   if (!query?.open) return "";
 
-  const stepLabel = { 1: "①选择课文", 2: "②选择部首", 3: "③选择单字", 4: "④预览导出" }[query.step];
+  const isPage = query.scope === "page";
+  const title = isPage ? "打印页面" : "查字导出";
+  const stepLabel = isPage
+    ? { 3: "选择单字", 4: "预览导出" }[query.step]
+    : { 1: "①选择课文", 2: "②选择部首", 3: "③选择单字", 4: "④预览导出" }[query.step];
   return `
     <div class="cq-overlay">
       <div class="cq-dialog">
         <div class="cq-head">
-          <span>查字导出 · ${stepLabel}</span>
+          <span>${title} · ${stepLabel}</span>
           <button class="cq-x" data-action="charquery-close" aria-label="关闭">×</button>
         </div>
         <div class="cq-body">${renderCharQueryStep(query)}</div>
@@ -518,7 +523,9 @@ function renderCharQueryStep(query) {
   }
 
   if (query.step === 3) {
-    const candidates = charsInDecks(query.deckIds, query.radicals, query.charSort);
+    const candidates = query.scope === "page"
+      ? charsInDecks(query.deckIds, null, query.charSort, query.pageId)
+      : charsInDecks(query.deckIds, query.radicals, query.charSort);
     const selected = new Set(query.chars || []);
     const allSelected = candidates.length > 0 && candidates.every((item) => selected.has(item.char));
     const chosen = candidates.filter((item) => selected.has(item.char)).length;
@@ -531,16 +538,16 @@ function renderCharQueryStep(query) {
       <div class="cq-chips">
         ${candidates.length ? candidates.map((item) => `
           <button class="cq-chip ${selected.has(item.char) ? "is-sel" : ""}" data-action="charquery-char" data-char="${escapeHtml(item.char)}">${escapeHtml(item.char)} <span class="cq-dim">${item.count}</span></button>
-        `).join("") : `<span class="cq-dim">没有满足条件的字。</span>`}
+        `).join("") : `<span class="cq-dim">这一页没有可导出的字。</span>`}
       </div>
       <div class="cq-foot">
-        <button data-action="charquery-back">← 上一步</button>
+        ${query.scope === "page" ? "<span></span>" : `<button data-action="charquery-back">← 上一步</button>`}
         <button class="cq-primary" data-action="charquery-to-preview" ${chosen ? "" : "disabled"}>预览导出 →</button>
       </div>
     `;
   }
 
-  const groups = groupByRadical(collectMatches(query.deckIds, new Set(query.chars || [])));
+  const groups = groupByRadical(collectMatches(query.deckIds, new Set(query.chars || []), query.pageId || null));
   const total = groups.reduce((sum, group) => sum + group.items.length, 0);
   const uniqueCount = (query.chars || []).length;
   return `
