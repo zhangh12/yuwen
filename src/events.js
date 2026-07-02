@@ -31,7 +31,7 @@ import {
   id,
   dateStamp
 } from "./core.js";
-import { render, app } from "./render.js";
+import { render, app, measureAutoLayout } from "./render.js";
 import { saveState, touchDeck, exportBackup, importBackups, parseBackupFile, addBackupAsNewBook, addBackupToBook, importPages, storeImageBlob } from "./storage.js";
 import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, buildDocx, buildPrintHtml } from "./charquery.js";
 import { fetchStrokes, buildZitieHtml } from "./zitie.js";
@@ -1522,7 +1522,7 @@ function importPagesFlow() {
     const file = input.files?.[0];
     if (!file) return;
     try {
-      const count = await importPages(file);
+      const count = await importPages(file, measureAutoLayout);
       clearTransient();
       render();
       window.alert(`已导入 ${count} 个页面到当前讲义。`);

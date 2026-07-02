@@ -20,7 +20,8 @@ import {
   clampTokenIndex,
   imageContext,
   lookupZdictMeanings,
-  allTexts
+  allTexts,
+  isHanzi
 } from "./core.js";
 import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, mergeBySentence, headerLine } from "./charquery.js";
 import { imageUrl } from "./storage.js";
@@ -685,6 +686,56 @@ function renderImportChoice() {
       </div>
     </div>
   `;
+}
+
+// --- 导入排版：真实 DOM 测量 ---------------------------------------------------
+//
+// 把正文用真实的 lesson-page/main-zone 结构渲染到离屏节点，从大到小试字号，
+// 取普通页能放下的**最大**档；0.7 仍放不下则判全文页。取代 storage.autoLayout
+// 的"430px/90px"启发式估算——所见即所得，不依赖对 CSS 的手工建模。
+// 拼音统一用较宽的占位（zhōng），结果偏保守（宁可字号小一档，不会溢出）。
+// 任何异常返回 null，importPages 落回启发式。
+const MEASURE_SCALES = [1.2, 1.1, 1.0, 0.9, 0.8, 0.7];
+
+export function measureAutoLayout(text) {
+  try {
+    const body = String(text);
+    const longText = [...body].length > 18 || body.includes("\n");
+    const workspace = document.querySelector(".workspace");
+    const width = Math.max(320, (workspace ? workspace.clientWidth : window.innerWidth - 164) - 48);
+
+    const host = document.createElement("div");
+    host.style.cssText = `position:fixed;left:-99999px;top:0;width:${width}px;visibility:hidden;pointer-events:none`;
+    host.innerHTML = html`
+      <section class="lesson-page">
+        <div class="lesson-grid" style="--main-scale:1">
+          <section class="main-zone ${longText ? "is-long-text" : ""}">
+            <div class="main-text">${[...body].map((char) => isHanzi(char)
+              ? html`<span class="token"><span class="pinyin">zhōng</span><span class="hanzi-char">${char}</span></span>`
+              : html`<span class="plain-char">${char}</span>`)}</div>
+          </section>
+          <section class="example-zone"></section>
+          <section class="image-zone"></section>
+        </div>
+      </section>
+    `.s;
+    document.body.appendChild(host);
+    try {
+      const grid = host.querySelector(".lesson-grid");
+      const zone = host.querySelector(".main-zone");
+      for (const scale of MEASURE_SCALES) {
+        grid.style.setProperty("--main-scale", String(scale));
+        if (zone.scrollHeight <= zone.clientHeight + 1 && zone.scrollWidth <= zone.clientWidth + 1) {
+          return { mainTextScale: scale, textOnly: false };
+        }
+      }
+      return { mainTextScale: 0.7, textOnly: true };
+    } finally {
+      host.remove();
+    }
+  } catch {
+    return null;
+  }
 }
 
 function renderPinyinMenu() {
