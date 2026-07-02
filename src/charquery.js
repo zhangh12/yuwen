@@ -65,7 +65,7 @@ export function radicalsInDecks(deckIds) {
 // sentence) in deck → page → sentence order.
 // Unique characters across the given decks whose radical is in `radicals`,
 // each with its occurrence count, sorted by count desc then by character.
-// sortBy: "freq" (出现次数降序，默认) | "radical"（按部首归类，与 Word 导出的分组顺序一致）。
+// sortBy: "appear"（首次出现顺序）| "freq"（出现次数降序）| "radical"（按部首归类，与 Word 导出的分组顺序一致）。
 // radicals: an array to filter by, or null/undefined to include every 汉字
 // (used by 打印页面, which wants all chars regardless of radical).
 // pageId: restrict to a single page when given.
@@ -86,6 +86,8 @@ export function charsInDecks(deckIds, radicals, sortBy = "freq", pageId = null) 
     });
   });
   const list = [...counts.entries()].map(([char, count]) => ({ char, count, radical: lookupRadical(char) }));
+  // counts is a Map, so its entry order is already first-appearance order.
+  if (sortBy === "appear") return list;
   if (sortBy === "radical") {
     const groupTotal = new Map();
     for (const item of list) groupTotal.set(item.radical, (groupTotal.get(item.radical) || 0) + item.count);

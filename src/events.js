@@ -345,7 +345,7 @@ function handleAction(target, event) {
   if (action === "charquery-to-chars") { initQueryChars(); state.ui.query.step = 3; return render(); }
   if (action === "charquery-char") { toggleQueryChar(target.dataset.char); return render(); }
   if (action === "charquery-chars-all") { toggleAllQueryChars(); return render(); }
-  if (action === "charquery-char-sort") { state.ui.query.charSort = target.checked ? "radical" : "freq"; return render(); }
+  if (action === "charquery-sort") { state.ui.query.charSort = target.dataset.sort; return render(); }
   if (action === "charquery-to-preview") { state.ui.query.step = 4; return render(); }
   if (action === "charquery-include-pinyin") { state.ui.query.includePinyin = target.checked; return render(); }
   if (action === "charquery-export-word") return exportCharQueryWord();
@@ -1324,7 +1324,7 @@ function openCharQuery() {
 // 「选择单字」步，默认全选；预览/导出（Word / 字帖）走同一套代码。
 function openPrintPage(pageId = state.activePageId) {
   const deckId = state.activeDeckId;
-  const chars = charsInDecks([deckId], null, "freq", pageId).map((item) => item.char);
+  const chars = charsInDecks([deckId], null, "appear", pageId).map((item) => item.char);
   state.ui.query = {
     open: true,
     step: 3,
@@ -1333,7 +1333,7 @@ function openPrintPage(pageId = state.activePageId) {
     pageId,
     radicals: [],
     chars,
-    charSort: "freq",
+    charSort: "appear",
     includePinyin: true
   };
   closeFloaters();

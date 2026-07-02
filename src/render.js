@@ -532,7 +532,11 @@ function renderCharQueryStep(query) {
     return `
       <div class="cq-toolbar">
         <button data-action="charquery-chars-all">${allSelected ? "全不选" : "全选"}</button>
-        <label class="toggle"><input type="checkbox" data-action="charquery-char-sort" ${query.charSort === "radical" ? "checked" : ""}> 按部首排序</label>
+        <span class="cq-sort">排序：
+          <button class="cq-sortbtn ${query.charSort === "appear" ? "is-on" : ""}" data-action="charquery-sort" data-sort="appear">首次</button>
+          <button class="cq-sortbtn ${query.charSort === "freq" ? "is-on" : ""}" data-action="charquery-sort" data-sort="freq">词频</button>
+          <button class="cq-sortbtn ${query.charSort === "radical" ? "is-on" : ""}" data-action="charquery-sort" data-sort="radical">部首</button>
+        </span>
         <span class="cq-dim">默认全选，点字可移除/恢复 · 已选 ${chosen} / ${candidates.length} 字</span>
       </div>
       <div class="cq-chips">

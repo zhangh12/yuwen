@@ -941,6 +941,27 @@ input:focus {
   font-size: 13px;
 }
 
+.cq-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.cq-sortbtn {
+  min-height: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.cq-sortbtn.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .cq-list {
   display: flex;
   flex-direction: column;
