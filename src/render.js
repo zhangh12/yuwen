@@ -768,6 +768,9 @@ function renderInbox() {
             <button class="cq-row" data-action="inbox-append">
               <span class="cq-row-title">把这些页追加到当前课文《${deck.title}》</span>
             </button>
+            <button class="cq-row" data-action="inbox-close">
+              <span class="cq-row-title">稍后再说<span class="cq-dim">（下次回到 yuwen 时再提醒）</span></span>
+            </button>
             <button class="cq-row" data-action="inbox-dismiss">
               <span class="cq-row-title">忽略此文件<span class="cq-dim">（不再提示，除非有新内容）</span></span>
             </button>

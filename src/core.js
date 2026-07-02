@@ -5,7 +5,7 @@ export const STORAGE_KEY = "yuwen.decks.v1";
 
 // 显示在顶栏 brand 里的版本号，让用户一眼确认打开的是不是最新版。
 // 每次有用户可感知的改动就手动递增。
-export const APP_VERSION = "0.5.0";
+export const APP_VERSION = "0.5.1";
 
 export const COLORS = [
   { key: "ink", label: "黑", value: "#211d1a" },
