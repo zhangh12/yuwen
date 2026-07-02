@@ -6,6 +6,7 @@
   "description": "A clean Chinese handout editor for early learners.",
   "scripts": {
     "start": "python3 -m http.server 5173",
-    "check": "for f in src/*.js; do node --check \"$f\" || exit 1; done && node --check vendor/data-chars-local.js"
+    "check": "for f in src/*.js; do node --check \"$f\" || exit 1; done && node --check vendor/data-chars-local.js",
+    "test": "npm run check && node --test 'test/*.test.mjs'"
   }
 }
