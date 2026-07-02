@@ -15,10 +15,11 @@
 原生 ES module，需通过本地服务器访问，不能用 `file://` 直接打开 `index.html`：
 
 ```bash
-python3 -m http.server 5173      # 然后访问 http://localhost:5173
+npm start                        # 等价于 python3 -m http.server 5173
+# 然后访问 http://localhost:5173
 ```
 
-macOS 亦可双击 **「启动 yuwen.command」** 自动起服务器并打开浏览器。无需构建、无需安装依赖。数据保存在本机浏览器中。
+macOS 亦可双击 **「启动 yuwen.command」** 自动起服务器并打开浏览器。无需构建、无需安装依赖（`npm start` 只是起静态服务器的快捷方式）。数据保存在本机浏览器中。
 
 ## 功能说明
 
@@ -35,7 +36,7 @@ macOS 亦可双击 **「启动 yuwen.command」** 自动起服务器并打开浏
 
 - 左侧页面栏显示**当前课文**的页面列表。
 - `+` 新增页面；「导入」从 `yuwen-pages` 文件批量导入页面到当前课文。
-- **多选**：普通点击＝单选；`Shift` 点击＝选区间；`Cmd`(macOS)/`Ctrl`(Win) 点击＝增减单页（对齐 Finder/PowerPoint）。
+- **多选**：普通点击＝单选；`Shift` 点击＝选区间；`Cmd`(macOS)/`Ctrl`(Win) 点击＝增减单页（对齐 Finder/PowerPoint）。页面条目可键盘聚焦，`Enter/空格` 打开。
 - 右键菜单：**打印页面…** / 复制页面 / 删除页面；在多选（≥2 页）里右键则是「删除选中的 N 个页面」。删除有确认，且不允许删空整册。
 - 页面可拖拽重排，拖动时在目标位置显示插入指示线。
 
@@ -115,7 +116,7 @@ macOS 亦可双击 **「启动 yuwen.command」** 自动起服务器并打开浏
 
 ### 按部首查字、导出 Word 与字帖
 
-页面栏「查字」打开四步向导，把多本课本/多篇课文中的字汇编成可打印文档或练字帖：
+顶部工具栏「查字」打开四步向导，把多本课本/多篇课文中的字汇编成可打印文档或练字帖：
 
 1. **选课文**：**两级树**——课本可整本勾选（三态勾选框：全选/部分/未选）并展开，课文可单独勾选；勾课本＝选/清该本全部课文。
 2. **选部首**：基于所选课文实际出现的部首（带字数），可「全选」（＝不按部首筛）或部分选。
@@ -145,6 +146,13 @@ macOS 亦可双击 **「启动 yuwen.command」** 自动起服务器并打开浏
 以下面向后续开发与代码审阅：先讲清 yuwen 的设计取舍与不可破坏的约束，再给架构、关键决策理由、数据格式与开发约定。
 
 > 命名提示：代码内部**一篇课文仍称 `deck`**（历史名，早期「讲义」＝现在的「课文」）；`book`（课本）是在其上新加的分组层。`state.activeDeckId` 即「当前课文 id」。UI 文案统一用「课本 / 课文」。
+
+## 给代码审阅者
+
+- **跑起来**：`npm start` → `http://localhost:5173`；语法检查 `npm run check`。没有测试框架与构建链，全部源码在 `src/`（6 个 ES module，共约 3000 行）+ `styles.css`。
+- **读代码的顺序**：`core.js`（数据模型，无 DOM）→ `storage.js`（持久化/迁移/备份）→ `render.js`（全量 innerHTML 渲染）→ `events.js`（一次性委托的全部交互）。`charquery.js`/`zitie.js` 是独立的导出功能。
+- **重点核对的不变式**：① 用户文本必须经 `escapeHtml` 才能进模板（XSS 面）；② 导入路径只接受 `data:image/` 内联图片（`storage.js` 的 `sanitizeEnvelope`）；③ 旧版 `decks[]` 存档的迁移不丢数据（`normalizeToBooks`/`ensureBookModel`）；④ `mainText` 是唯一真源，`tokens` 一律重新派生；⑤ 备份「一个 JSON = 一本课本」。
+- **已知取舍**（非缺陷）：全量重画不做 diff；`deck`＝课文的历史命名；字帖笔画数据来自 CDN；详见「关键设计决策与理由」。
 
 ## 设计重点
 
@@ -211,7 +219,7 @@ state.ui{…}                   纯瞬时界面状态（不持久化：导航展
 `saveState()` 写入 payload `{ version:2, books, activeBookId, activeDeckId, activePageId }`：
 
 - **主存 IndexedDB**：库 `yuwen` / 仓库 `kv` / 键 `state`，容量足以容纳内联图片。
-- **localStorage 兜底**：同一 payload 尽力镜像；超配额则忽略（以 IndexedDB 为准）。
+- **localStorage 兜底**：同一 payload **防抖镜像**（400ms 合并连续保存，页面隐藏时冲刷），超过 ~4.5MB 直接跳过、超配额则忽略（均以 IndexedDB 为准）。避免图多的课本每次编辑都付一次全量 `JSON.stringify`。
 - **迁移（无损）**：启动时读到旧版扁平 payload `{ decks, activeDeckId, activePageId }`，自动包成**一本默认课本「我的课本」**，各课文的旧 `lexicon` 合并进课本级；新旧两种形状都能读。
 
 ## 关键设计决策与理由
@@ -289,7 +297,7 @@ npm run check      # node --check 校验所有源码模块 + 字库包装脚本�
 **限制**
 
 - 数据存于单一浏览器的 IndexedDB，无账号/云同步/后端。
-- 图片以内联 `data:` URL 随课本存储，尚无独立资源包格式；`saveState()` 每次改动全量序列化，图多时有开销。
+- 图片以内联 `data:` URL 随课本存储，尚无独立资源包格式（IndexedDB 即改即存；localStorage 镜像已防抖并对大 payload 跳过）。
 - 不支持跨课本移动课文（仅在导入时选目标课本）。
 - 整页朗读停用；多音字朗读受浏览器 TTS 限制。
 - AI 配图仅生成「提示词」，未接入自动搜索/生成。
@@ -298,7 +306,7 @@ npm run check      # node --check 校验所有源码模块 + 字库包装脚本�
 **可能的后续**
 
 - 跨课本移动/整理课文。
-- 资源包格式（图片与课文分离），便于分享与版本管理；`saveState` 防抖。
+- 资源包格式（图片与课文分离），便于分享与版本管理。
 - 更好的语音/朗读（或离线 TTS）。
 - AI 配图/例句的实际接入（在不破坏「纯静态」前提下探索）。
 - 导入排版从启发式走向「渲染后按实际溢出自适应」。
