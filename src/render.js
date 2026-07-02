@@ -7,6 +7,7 @@
 // 结构保证——忘了也不会引入 XSS。需要人工放行原始字符串时用 rawHtml()（当前无人用）。
 
 import {
+  APP_VERSION,
   COLORS,
   state,
   colorValue,
@@ -138,7 +139,7 @@ function renderFullShell(deck, page, flags) {
   const book = getActiveBook();
   return html`
     <header class="topbar">
-      <div class="brand"><strong>语文</strong><span>yǔwén</span></div>
+      <div class="brand"><strong>语文</strong><span>yǔwén · v${APP_VERSION}</span></div>
       <div class="toolbar-group">
         <button data-action="toggle-deck-picker">课本</button>
         <span class="active-deck-title" title="${book.title} › ${deck.title}">${book.title}<span class="crumb-sep">›</span>${deck.title}</span>
@@ -150,9 +151,9 @@ function renderFullShell(deck, page, flags) {
         <button data-action="scale-down">A-</button>
         <button data-action="scale-reset">A0</button>
         <button data-action="scale-up">A+</button>
-        <button data-action="edit-main">${state.ui.editingMain ? "完成正文" : "编辑正文"}</button>
         <label class="toggle"><input type="checkbox" data-action="toggle-text-only" ${page.textOnly ? rawHtml("checked") : ""}> 全文页</label>
-        <button data-action="speak" disabled title="朗读暂不可用">朗读</button>
+        <button data-action="speak" title="朗读正文；先用鼠标划选一段文字则只读选中部分">朗读</button>
+        <button data-action="clear-page-colors" title="清除本页正文的全部颜色">清色</button>
         <button data-action="toggle-chrome">最大化</button>
       </div>
       <div class="toolbar-spacer"></div>
@@ -229,7 +230,7 @@ function renderPageItem(page, index) {
   const selectedIds = state.ui.selectedPageIds || [];
   // Only show the multi-select ring when 2+ pages are selected, so a normal
   // single selection still reads as just the active page.
-  const selected = selectedIds.length > 1 && selectedIds.includes(page.id) ? "is-selected" : "";
+  const selected = selectedIds.length > 0 && selectedIds.includes(page.id) ? "is-selected" : "";
   const active = page.id === state.activePageId ? "is-active" : "";
   return html`
     <div class="page-item ${active} ${selected}" data-page-id="${page.id}" role="button" tabindex="0" draggable="true">
@@ -279,7 +280,7 @@ function renderMainZone(page, longText) {
 
 function renderMainText(page) {
   if (!page.mainText.trim()) {
-    return html`<span class="zone-empty-hint">点击“编辑正文”输入文字</span>`;
+    return html`<span class="zone-empty-hint">双击此处输入正文</span>`;
   }
 
   const tokensByIndex = new Map(page.tokens.map((token) => [token.index, token]));
@@ -323,6 +324,7 @@ function renderExampleZone(page) {
               <button data-action="prev-zdict">‹</button>
               <button data-action="next-zdict">›</button>
             ` : ""}
+            <button data-action="speak-example" data-text="${meanings[idx]}" title="朗读这条释义">读</button>
             <button data-action="copy-prompt" title="生成并复制图片提示词">提示词</button>
           </div>
           <div class="example-content">
@@ -345,6 +347,7 @@ function renderExampleZone(page) {
         ${examples.length ? html`
           <button data-action="prev-example" ${examples.length < 2 ? rawHtml("disabled") : ""}>‹</button>
           <button data-action="next-example" ${examples.length < 2 ? rawHtml("disabled") : ""}>›</button>
+          <button data-action="speak-example" data-text="${current.text || ""}" title="朗读这条例句">读</button>
           <button data-action="hide-example" title="只在当前位置隐藏">藏</button>
           <button data-action="delete-example" title="从本课本共享素材中删除">删</button>
           <button data-action="copy-prompt" title="生成并复制图片提示词">提示词</button>
@@ -456,7 +459,7 @@ function renderPageContextMenu() {
   }
   return html`
     <div class="context-menu" style="left:${state.ui.pageContext.x}px;top:${state.ui.pageContext.y}px">
-      <button class="menu-item" data-action="print-page" data-page-id="${state.ui.pageContext.pageId}">打印页面…</button>
+      <button class="menu-item" data-action="print-page" data-page-id="${state.ui.pageContext.pageId}">打印页面</button>
       <button class="menu-item" data-action="copy-page" data-page-id="${state.ui.pageContext.pageId}">复制页面</button>
       <button class="menu-item" data-action="delete-page" data-page-id="${state.ui.pageContext.pageId}">删除页面</button>
     </div>

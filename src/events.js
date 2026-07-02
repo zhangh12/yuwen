@@ -63,6 +63,20 @@ function eventEl(event) {
   return target instanceof Element ? target : (target?.parentElement ?? null);
 }
 
+// 正文区内的非空文本选区（用户用鼠标划选了若干字）。用于：
+// ① 朗读选中部分；② 点击/右键时不打断选区（用户只是想复制）。
+function mainZoneSelectionText() {
+  const sel = window.getSelection?.();
+  if (!sel || sel.isCollapsed) return "";
+  const node = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode?.parentElement;
+  if (!node?.closest?.(".main-zone")) return "";
+  return sel.toString();
+}
+
+// 手动双击检测：render() 全量重画会打断原生 dblclick（第一次点击就换掉了节点），
+// 所以自己记录上一次点击的时间与位置。
+let lastMainClick = null;
+
 function clearSelection() {
   commitActiveField();
   state.ui.activeTokenId = "";
@@ -79,6 +93,26 @@ function clearSelection() {
 function onAppClick(event) {
   const el = eventEl(event);
   if (!el) return;
+
+  // 拖选了正文文字后松开鼠标：什么都不做，让用户复制（重画会毁掉选区）。
+  if (mainZoneSelectionText() && el.closest(".main-zone")) return;
+
+  // 双击正文区（450ms 内同位置两次点击）→ 进入正文编辑。
+  const inMain = !!el.closest(".main-zone");
+  const now = Date.now();
+  if (inMain && !state.ui.editingMain && lastMainClick
+    && now - lastMainClick.t < 450
+    && Math.abs(event.clientX - lastMainClick.x) < 8
+    && Math.abs(event.clientY - lastMainClick.y) < 8) {
+    lastMainClick = null;
+    commitActiveField();
+    window.getSelection?.()?.removeAllRanges();
+    state.ui.editingMain = true;
+    closeFloaters();
+    render();
+    return;
+  }
+  lastMainClick = inMain ? { t: now, x: event.clientX, y: event.clientY } : null;
 
   const actionEl = el.closest("[data-action]");
   if (actionEl) {
@@ -153,6 +187,9 @@ function onAppClick(event) {
 function onAppContextMenu(event) {
   const el = eventEl(event);
   if (!el) return;
+
+  // 正文里有文字选区时不接管右键，让浏览器原生菜单提供「复制」。
+  if (mainZoneSelectionText() && el.closest(".main-zone")) return;
 
   const tokenEl = el.closest("[data-token-id]");
   if (tokenEl) {
@@ -412,13 +449,6 @@ function handleAction(target, event) {
     return render();
   }
 
-  if (action === "edit-main") {
-    commitActiveField();
-    state.ui.editingMain = !state.ui.editingMain;
-    closeFloaters();
-    return render();
-  }
-
   if (action === "scale-down" || action === "scale-up" || action === "scale-reset") {
     if (action === "scale-reset") page.mainTextScale = 1;
     if (action === "scale-down") page.mainTextScale = Math.max(0.7, Number((page.mainTextScale - 0.1).toFixed(2)));
@@ -427,7 +457,25 @@ function handleAction(target, event) {
     return render();
   }
 
-  if (action === "speak") return speakText(page.mainText);
+  if (action === "speak") {
+    const text = mainZoneSelectionText() || page.mainText;
+    if (text.trim()) speakText(text);
+    return;
+  }
+
+  if (action === "speak-example") {
+    const text = (target.dataset.text || "").trim();
+    if (text) speakText(text);
+    return;
+  }
+
+  if (action === "clear-page-colors") {
+    page.tokens.forEach((token) => { token.color = ""; });
+    state.ui.annotating = false;
+    state.ui.annotationOriginalColors = {};
+    touchDeck();
+    return render();
+  }
 
   if (action === "speak-token") {
     const token = getToken(page, state.ui.menu?.tokenId || state.ui.activeTokenId);
@@ -1037,14 +1085,15 @@ function copyPage(pageId = state.activePageId) {
 
 function deletePage(pageId = state.activePageId) {
   const deck = getActiveDeck();
-  if (deck.pages.length <= 1) return;
   const page = deck.pages.find((item) => item.id === pageId);
   if (!page) return;
   if (!window.confirm("删除该页面？")) return;
   const index = deck.pages.findIndex((item) => item.id === page.id);
   deck.pages.splice(index, 1);
+  // 删到一页不剩时自动补一张空白页（课文始终至少有一页）
+  if (!deck.pages.length) deck.pages.push(createPage("第 1 页", ""));
   if (state.activePageId === page.id) {
-    state.activePageId = deck.pages[Math.max(0, index - 1)].id;
+    state.activePageId = deck.pages[Math.min(Math.max(0, index - 1), deck.pages.length - 1)].id;
   }
   clearTransient();
   state.ui.pageContext = null;
@@ -1100,14 +1149,12 @@ function deletePages() {
   const deck = getActiveDeck();
   const selected = currentPageSelection().filter((pid) => deck.pages.some((page) => page.id === pid));
   if (selected.length < 2) return deletePage(state.ui.pageContext?.pageId);
-  if (selected.length >= deck.pages.length) {
-    window.alert("不能删除讲义中的全部页面，至少保留一页。");
-    return;
-  }
   if (!window.confirm(`删除选中的 ${selected.length} 个页面？`)) return;
   const firstIndex = deck.pages.findIndex((page) => selected.includes(page.id));
   const removing = new Set(selected);
   deck.pages = deck.pages.filter((page) => !removing.has(page.id));
+  // 全删时自动补一张空白页，而不是拦下用户
+  if (!deck.pages.length) deck.pages.push(createPage("第 1 页", ""));
   state.activePageId = deck.pages[Math.min(firstIndex, deck.pages.length - 1)].id;
   clearTransient();
   state.ui.pageContext = null;
@@ -1243,8 +1290,15 @@ function speakText(text) {
     utterance.lang = "zh-CN";
     // Pin an actual Chinese voice when one exists; otherwise the engine may read
     // the character with the default (often English) voice and mangle it.
-    const voices = synth.getVoices?.() || [];
-    const zhVoice = voices.find((voice) => /^zh\b/i.test(voice.lang) || /zh[-_]/i.test(voice.lang));
+    const voices = (synth.getVoices?.() || []).filter((voice) => /^zh\b/i.test(voice.lang) || /zh[-_]/i.test(voice.lang));
+    // 同为中文语音时，优先增强/自然音色（macOS 的 Tingting 增强版、Siri 声等），
+    // 再偏好 zh-CN 与本地引擎。
+    const score = (voice) =>
+      (/premium|enhanced|natural|siri/i.test(voice.name) ? 4 : 0)
+      + (/tingting|婷婷|yue|xiao|晓/i.test(voice.name) ? 2 : 0)
+      + (/^zh[-_]CN/i.test(voice.lang) ? 1 : 0)
+      + (voice.localService ? 0.5 : 0);
+    const zhVoice = voices.sort((a, b) => score(b) - score(a))[0];
     if (zhVoice) utterance.voice = zhVoice;
     utterance.rate = 0.82;
     synth.speak(utterance);
@@ -1332,7 +1386,7 @@ function openCharQuery() {
     radicals: [],
     chars: [],
     charSort: "freq",
-    includePinyin: true
+    includePinyin: false
   };
   closeFloaters();
   render();
@@ -1342,7 +1396,6 @@ function openCharQuery() {
 // 「选择单字」步，默认全选；预览/导出（Word / 字帖）走同一套代码。
 function openPrintPage(pageId = state.activePageId) {
   const deckId = state.activeDeckId;
-  const chars = charsInDecks([deckId], null, "appear", pageId).map((item) => item.char);
   state.ui.query = {
     open: true,
     step: 3,
@@ -1350,9 +1403,9 @@ function openPrintPage(pageId = state.activePageId) {
     deckIds: [deckId],
     pageId,
     radicals: [],
-    chars,
+    chars: [],
     charSort: "appear",
-    includePinyin: true
+    includePinyin: false
   };
   closeFloaters();
   render();

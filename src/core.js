@@ -3,6 +3,10 @@
 
 export const STORAGE_KEY = "yuwen.decks.v1";
 
+// 显示在顶栏 brand 里的版本号，让用户一眼确认打开的是不是最新版。
+// 每次有用户可感知的改动就手动递增。
+export const APP_VERSION = "0.3.0";
+
 export const COLORS = [
   { key: "ink", label: "黑", value: "#211d1a" },
   { key: "red", label: "红", value: "#9b2f26" },
@@ -255,7 +259,7 @@ export function createDeck(title = "课文 1", text = "春天来了") {
     title,
     updatedAt: Date.now(),
     settings: {
-      showPinyin: true,
+      showPinyin: false,
       showZdictExamples: false,
       mainFont: "kai"
     },
@@ -327,7 +331,7 @@ export function ensureBookModel(book) {
 export function ensureDeckModel(deck, book = bookOfDeck(deck)) {
   book.lexicon ||= {};
   deck.settings ||= {};
-  deck.settings.showPinyin ??= true;
+  deck.settings.showPinyin ??= false;
   deck.settings.showZdictExamples ??= false;
   deck.settings.mainFont ||= "kai";
   // Pre-book saves kept the lexicon on the 课文; fold it into the book's lexicon

@@ -244,10 +244,19 @@ input:focus {
   background: #fffdf8;
 }
 
-/* Multi-selected pages (Shift / Cmd-Ctrl click) get an accent ring; the active
-   page among them keeps its brighter background so it still reads as "current". */
+/* 当前页始终带边框（page-item 是 div、没有默认 border，单靠 border-color 看不见）。 */
+.page-item.is-active {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+/* Selected pages (single or Shift / Cmd-Ctrl multi) get an accent ring; the
+   active page keeps its brighter background so it still reads as "current". */
 .page-item.is-selected {
   box-shadow: inset 0 0 0 1.5px rgba(155, 47, 38, 0.5);
+}
+
+.page-item.is-active.is-selected {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
 /* 课本 › 课文 navigator (two-level accordion inside the picker popover) */
