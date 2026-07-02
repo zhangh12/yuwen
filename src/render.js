@@ -102,6 +102,7 @@ export function render() {
       ${renderCharQuery()}
       ${renderBackup()}
       ${renderImportChoice()}
+      ${renderInbox()}
     </div>
   `.s;
 
@@ -739,6 +740,42 @@ export function measureAutoLayout(text) {
   } catch {
     return null;
   }
+}
+
+// 收件箱提示：textbook-photos 技能写入 inbox.json 后，一键选择去处。
+function renderInbox() {
+  const inbox = state.ui.inbox;
+  if (!inbox?.open) return "";
+  const parsed = inbox.parsed;
+  const title = (typeof parsed.title === "string" && parsed.title.trim()) || parsed.pages[0]?.title || "新课文";
+  const deck = getActiveDeck();
+  const book = getActiveBook();
+  return html`
+    <div class="cq-overlay">
+      <div class="cq-dialog cq-dialog-narrow">
+        <div class="cq-head">
+          <span>收件箱 · 发现新课文</span>
+          <button class="cq-x" data-action="inbox-close" aria-label="稍后再说">×</button>
+        </div>
+        <div class="cq-body">
+          <div class="cq-toolbar">
+            <span>《${title}》 · ${parsed.pages.length} 页<span class="cq-dim">（来自 textbook-photos 识别）</span></span>
+          </div>
+          <div class="cq-list">
+            <button class="cq-row cq-primary" data-action="inbox-new-deck">
+              <span class="cq-row-title">新建为课文，放进《${book.title}》</span>
+            </button>
+            <button class="cq-row" data-action="inbox-append">
+              <span class="cq-row-title">把这些页追加到当前课文《${deck.title}》</span>
+            </button>
+            <button class="cq-row" data-action="inbox-dismiss">
+              <span class="cq-row-title">忽略此文件<span class="cq-dim">（不再提示，除非有新内容）</span></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function renderPinyinMenu() {

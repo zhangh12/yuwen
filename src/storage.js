@@ -17,6 +17,7 @@ import {
   getActiveDeck,
   getActiveBook,
   createBook,
+  createDeck,
   createPage,
   tokenizePage,
   ensureBookModel,
@@ -537,20 +538,14 @@ export function autoLayout(text) {
 
 // layoutFn 允许调用方注入更好的排版判定（如 render 层的真实 DOM 测量），
 // 默认用上面的启发式。
-export async function importPages(file, layoutFn = autoLayout) {
-  const text = await file.text();
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error("文件不是有效的 JSON。");
-  }
-  if (!parsed || parsed.format !== "yuwen-pages" || !Array.isArray(parsed.pages)
-    || !parsed.pages.every((page) => page && typeof page.text === "string")) {
-    throw new Error("文件格式不是 yuwen-pages。");
-  }
-  const deck = getActiveDeck();
-  const created = parsed.pages.map((page) => {
+function isYuwenPages(parsed) {
+  return !!parsed && parsed.format === "yuwen-pages" && Array.isArray(parsed.pages)
+    && parsed.pages.length > 0
+    && parsed.pages.every((page) => page && typeof page.text === "string");
+}
+
+function buildImportedPages(parsed, layoutFn) {
+  return parsed.pages.map((page) => {
     const body = String(page.text);
     const title = (typeof page.title === "string" && page.title.trim())
       || body.trim().replace(/\s+/g, " ").slice(0, 12)
@@ -561,9 +556,72 @@ export async function importPages(file, layoutFn = autoLayout) {
     made.textOnly = layout.textOnly;
     return made;
   });
-  if (!created.length) throw new Error("文件中没有页面。");
+}
+
+// 追加进当前课文（页面栏「导入」与收件箱「追加」共用）。
+export function importParsedPagesIntoDeck(parsed, layoutFn = autoLayout) {
+  if (!isYuwenPages(parsed)) throw new Error("文件格式不是 yuwen-pages。");
+  const deck = getActiveDeck();
+  const created = buildImportedPages(parsed, layoutFn);
   deck.pages.push(...created);
   state.activePageId = created[0].id;
   saveState();
   return created.length;
+}
+
+// 作为新课文加进当前课本（收件箱的默认去处：一课 = 一篇课文）。
+export function importParsedPagesAsNewDeck(parsed, layoutFn = autoLayout) {
+  if (!isYuwenPages(parsed)) throw new Error("文件格式不是 yuwen-pages。");
+  const book = getActiveBook();
+  const title = (typeof parsed.title === "string" && parsed.title.trim())
+    ? parsed.title.trim().slice(0, 30)
+    : `课文 ${book.texts.length + 1}`;
+  const deck = createDeck(title, "");
+  deck.pages = buildImportedPages(parsed, layoutFn);
+  book.texts.push(deck);
+  book.updatedAt = Date.now();
+  state.activeBookId = book.id;
+  state.activeDeckId = deck.id;
+  state.activePageId = deck.pages[0].id;
+  saveState();
+  return deck;
+}
+
+export async function importPages(file, layoutFn = autoLayout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch {
+    throw new Error("文件不是有效的 JSON。");
+  }
+  return importParsedPagesIntoDeck(parsed, layoutFn);
+}
+
+// --- 收件箱（inbox.json）------------------------------------------------------
+//
+// yuwen 由仓库目录的静态服务器提供，所以 textbook-photos 技能把识别结果写到
+// 仓库根的 inbox.json 后，yuwen 可以直接 fetch 到它——启动/窗口获焦时检查，
+// 发现没处理过的内容（按 id 去重）就弹一键导入提示。零后端、零文件选择器。
+
+const INBOX_SEEN_KEY = "yuwen.inbox.seen";
+
+export async function checkInbox() {
+  try {
+    const res = await fetch("inbox.json", { cache: "no-store" });
+    if (!res.ok) return null;
+    const parsed = await res.json();
+    if (!isYuwenPages(parsed)) return null;
+    const id = typeof parsed.id === "string" && parsed.id.trim() ? parsed.id.trim() : null;
+    if (!id) return null;
+    if (localStorage.getItem(INBOX_SEEN_KEY) === id) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function markInboxSeen(id) {
+  try {
+    localStorage.setItem(INBOX_SEEN_KEY, String(id));
+  } catch { /* 下次仍会提示，无碍 */ }
 }

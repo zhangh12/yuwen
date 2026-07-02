@@ -32,7 +32,7 @@ import {
   dateStamp
 } from "./core.js";
 import { render, app, measureAutoLayout } from "./render.js";
-import { saveState, touchDeck, exportBackup, importBackups, parseBackupFile, addBackupAsNewBook, addBackupToBook, importPages, storeImageBlob } from "./storage.js";
+import { saveState, touchDeck, exportBackup, importBackups, parseBackupFile, addBackupAsNewBook, addBackupToBook, importPages, importParsedPagesIntoDeck, importParsedPagesAsNewDeck, checkInbox, markInboxSeen, storeImageBlob } from "./storage.js";
 import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, buildDocx, buildPrintHtml } from "./charquery.js";
 import { fetchStrokes, buildZitieHtml } from "./zitie.js";
 
@@ -52,6 +52,19 @@ export function installEvents() {
 
   document.addEventListener("keydown", onDocumentKeyDown);
   document.addEventListener("click", onDocumentClick);
+
+  // 收件箱：启动与窗口获焦时看看 inbox.json 有没有新识别的课文
+  //（textbook-photos 技能写入仓库根，静态服务器可直接 fetch 到）。
+  window.addEventListener("focus", refreshInbox);
+  refreshInbox();
+}
+
+async function refreshInbox() {
+  if (state.ui.inbox) return;
+  const found = await checkInbox();
+  if (!found) return;
+  state.ui.inbox = { open: true, parsed: found };
+  render();
 }
 
 // Resolve the nearest Element for an event target. Drag/drop events in
@@ -148,6 +161,7 @@ function onAppClick(event) {
     state.ui.query = null;
     state.ui.backup = null;
     state.ui.importChoice = null;
+    state.ui.inbox = null;
     render();
     return;
   }
@@ -369,6 +383,14 @@ function handleAction(target, event) {
   if (action === "delete-pages") return deletePages();
   if (action === "print-page") return openPrintPage(target.dataset.pageId || state.ui.pageContext?.pageId);
   if (action === "import-deck") return importBackupsFlow();
+  if (action === "inbox-new-deck") return inboxImport("new");
+  if (action === "inbox-append") return inboxImport("append");
+  if (action === "inbox-dismiss") {
+    markInboxSeen(state.ui.inbox?.parsed?.id);
+    state.ui.inbox = null;
+    return render();
+  }
+  if (action === "inbox-close") { state.ui.inbox = null; return render(); }
   if (action === "import-choice-close") { state.ui.importChoice = null; return render(); }
   if (action === "import-as-newbook") return importAsNewBook();
   if (action === "import-into-book") return importIntoBook(target.dataset.bookId);
@@ -1328,6 +1350,23 @@ function speakText(text) {
   }
 }
 
+function inboxImport(mode) {
+  const parsed = state.ui.inbox?.parsed;
+  if (!parsed) return;
+  try {
+    if (mode === "new") importParsedPagesAsNewDeck(parsed, measureAutoLayout);
+    else importParsedPagesIntoDeck(parsed, measureAutoLayout);
+    markInboxSeen(parsed.id);
+    state.ui.inbox = null;
+    clearTransient();
+    expandBook(state.activeBookId);
+    render();
+    scrollActivePageIntoView();
+  } catch (error) {
+    window.alert(`导入失败：${error.message}`);
+  }
+}
+
 // --- 备份（导出 JSON）------------------------------------------------------
 // Reuses the 课本→课文 tree; selection (backup.deckIds) drives storage.exportBackup,
 // which writes one file per book that owns any selected 课文.
@@ -1656,10 +1695,11 @@ async function importIntoBook(bookId) {
 
 function onDocumentKeyDown(event) {
   if (event.key === "Escape") {
-    if (state.ui.query?.open || state.ui.backup?.open || state.ui.importChoice?.open) {
+    if (state.ui.query?.open || state.ui.backup?.open || state.ui.importChoice?.open || state.ui.inbox?.open) {
       state.ui.query = null;
       state.ui.backup = null;
       state.ui.importChoice = null;
+      state.ui.inbox = null;
       render();
       return;
     }

@@ -118,6 +118,40 @@ test("addBackupAsNewBook / addBackupToBook：新 id、lexicon 合并、激活切
   assert.ok(target.lexicon["风|fēng"], "插入时合并 lexicon");
 });
 
+test("收件箱：checkInbox 校验格式、按 id 去重；importParsedPagesAsNewDeck 建课文", async () => {
+  const { checkInbox, markInboxSeen, importParsedPagesAsNewDeck } = storage;
+  const inbox = { format: "yuwen-pages", version: 1, id: "ip-test-1", title: "青蛙写诗",
+    pages: [{ title: "一", text: "下雨了" }, { title: "二", text: "青蛙说" }] };
+  const realFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({ ok: true, json: async () => inbox });
+    const found = await checkInbox();
+    assert.equal(found?.id, "ip-test-1", "新 id 返回内容");
+
+    markInboxSeen("ip-test-1");
+    assert.equal(await checkInbox(), null, "同 id 第二次不再提示");
+
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ nope: 1 }) });
+    assert.equal(await checkInbox(), null, "非 yuwen-pages 忽略");
+    globalThis.fetch = async () => ({ ok: false });
+    assert.equal(await checkInbox(), null, "404 忽略");
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ ...inbox, id: "" }) });
+    assert.equal(await checkInbox(), null, "缺 id 忽略");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  // 一键建课文：标题取自 inbox.title，页数正确，激活切换
+  const book = state.books.find((b) => b.id === state.activeBookId);
+  const n0 = book.texts.length;
+  const deck = importParsedPagesAsNewDeck(inbox);
+  assert.equal(book.texts.length, n0 + 1);
+  assert.equal(deck.title, "青蛙写诗");
+  assert.equal(deck.pages.length, 2);
+  assert.equal(state.activeDeckId, deck.id);
+  assert.equal(state.activePageId, deck.pages[0].id);
+});
+
 test("importPages：追加进当前课文并自动排版（短文普通页 / 长文全文页）", async () => {
   // 显式定位当前课文（前面的导入测试会切换 active 指针）
   const book = state.books[0];
