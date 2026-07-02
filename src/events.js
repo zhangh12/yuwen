@@ -73,10 +73,6 @@ function mainZoneSelectionText() {
   return sel.toString();
 }
 
-// 手动双击检测：render() 全量重画会打断原生 dblclick（第一次点击就换掉了节点），
-// 所以自己记录上一次点击的时间与位置。
-let lastMainClick = null;
-
 function clearSelection() {
   commitActiveField();
   state.ui.activeTokenId = "";
@@ -96,23 +92,6 @@ function onAppClick(event) {
 
   // 拖选了正文文字后松开鼠标：什么都不做，让用户复制（重画会毁掉选区）。
   if (mainZoneSelectionText() && el.closest(".main-zone")) return;
-
-  // 双击正文区（450ms 内同位置两次点击）→ 进入正文编辑。
-  const inMain = !!el.closest(".main-zone");
-  const now = Date.now();
-  if (inMain && !state.ui.editingMain && lastMainClick
-    && now - lastMainClick.t < 450
-    && Math.abs(event.clientX - lastMainClick.x) < 8
-    && Math.abs(event.clientY - lastMainClick.y) < 8) {
-    lastMainClick = null;
-    commitActiveField();
-    window.getSelection?.()?.removeAllRanges();
-    state.ui.editingMain = true;
-    closeFloaters();
-    render();
-    return;
-  }
-  lastMainClick = inMain ? { t: now, x: event.clientX, y: event.clientY } : null;
 
   const actionEl = el.closest("[data-action]");
   if (actionEl) {
@@ -240,10 +219,33 @@ function onAppContextMenu(event) {
   }
 }
 
+// 双击正文进入编辑的检测状态。放在 pointerdown 层有两个原因：
+// ① 全量重画会打断原生 dblclick（第一次点击就换掉了节点）；
+// ② 双击的第二次按下会让浏览器原生选中一个词，click 层的"有选区不处理"
+//    守卫（为划选复制而设）会把第二击吞掉——检测必须发生在选词之前。
+let lastMainPointerDown = null;
+
 function onAppPointerDown(event) {
   const el = eventEl(event);
   const handle = el?.closest("[data-resize-image-id]");
-  if (handle) startImageResize(handle, event);
+  if (handle) return startImageResize(handle, event);
+
+  const inMain = !!el?.closest(".main-zone");
+  const now = Date.now();
+  if (inMain && !state.ui.editingMain && lastMainPointerDown
+    && now - lastMainPointerDown.t < 450
+    && Math.abs(event.clientX - lastMainPointerDown.x) < 12
+    && Math.abs(event.clientY - lastMainPointerDown.y) < 12) {
+    lastMainPointerDown = null;
+    event.preventDefault(); // 阻止原生按下选词与后续 click
+    commitActiveField();
+    window.getSelection?.()?.removeAllRanges();
+    state.ui.editingMain = true;
+    closeFloaters();
+    render();
+    return;
+  }
+  lastMainPointerDown = inMain ? { t: now, x: event.clientX, y: event.clientY } : null;
 }
 
 function onAppFocusOut(event) {
