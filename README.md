@@ -149,9 +149,9 @@ macOS 亦可双击 **「启动 yuwen.command」** 自动起服务器并打开浏
 
 ## 给代码审阅者
 
-- **跑起来**：`npm start` → `http://localhost:5173`；语法检查 `npm run check`。没有测试框架与构建链，全部源码在 `src/`（6 个 ES module，共约 3000 行）+ `styles.css`。
+- **跑起来**：`npm start` → `http://localhost:5173`。测试：`npm test`（node:test，零依赖）+ 浏览器自检页 `test/browser.html`（覆盖真 IndexedDB、注入面、测量排版；会清空本机数据）。全部源码在 `src/`（6 个 ES module）+ `styles.css`。
 - **读代码的顺序**：`core.js`（数据模型，无 DOM）→ `storage.js`（持久化/迁移/备份）→ `render.js`（全量 innerHTML 渲染）→ `events.js`（一次性委托的全部交互）。`charquery.js`/`zitie.js` 是独立的导出功能。
-- **重点核对的不变式**：① 用户文本必须经 `escapeHtml` 才能进模板（XSS 面）；② 导入路径只接受 `data:image/` 内联图片（`storage.js` 的 `sanitizeEnvelope`）；③ 旧版 `decks[]` 存档的迁移不丢数据（`normalizeToBooks`/`ensureBookModel`）；④ `mainText` 是唯一真源，`tokens` 一律重新派生；⑤ 备份「一个 JSON = 一本课本」。
+- **重点核对的不变式**：① 所有模板经自动转义的 `html` 标签模板拼装、插值默认转义（XSS 面：搜索 `rawHtml` 的少数放行点）；② 导入路径只接受 `data:image/` 内联图片（`storage.js` 的 `sanitizeEnvelope`）；③ 旧版 `decks[]` 存档的迁移不丢数据（`normalizeToBooks`/`ensureBookModel`）；④ `mainText` 是唯一真源，`tokens` 一律重新派生；⑤ 备份「一个 JSON = 一本课本」。
 - **已知取舍**（非缺陷）：全量重画不做 diff；`deck`＝课文的历史命名；字帖笔画数据来自 CDN；详见「关键设计决策与理由」。
 
 ## 设计重点
@@ -181,7 +181,7 @@ core / render / storage ← events
 |------|------|
 | `src/main.js` | 启动装配：加载状态 → 绑定事件 → 首次渲染。 |
 | `src/core.js` | **数据层，无 DOM**。常量、拼音/字库查询、全局 `state`、课本/课文/页面/汉字数据模型与上下文助手（`getActiveBook`/`getActiveDeck`/`allTexts`/`ensureBookModel`/`mergeLexicon` 等）。 |
-| `src/storage.js` | 持久化（IndexedDB 主存 + localStorage 兜底/迁移）、备份导出/导入（`yuwen-backup` 封套）、`yuwen-pages` 页面导入与导入时自动排版。 |
+| `src/storage.js` | 持久化（IndexedDB 主存 + localStorage 兜底/迁移）、**图片 Blob 仓**（`images` 对象仓 + objectURL 缓存 + 孤儿回收）、备份导出/导入（`yuwen-backup` 封套，导出内联/导入入仓）、`yuwen-pages` 页面导入（排版判定可注入）。 |
 | `src/render.js` | 界面渲染，持有 `#app` 根元素；`render()` 全量重画。 |
 | `src/events.js` | 事件委托与全部交互/数据操作逻辑。 |
 | `src/charquery.js` | 按部首查询与导出（Word `.docx` / 打印）的纯逻辑；可限定到单页（打印页面）。 |
@@ -190,7 +190,7 @@ core / render / storage ← events
 
 ### 三个核心机制
 
-- **渲染模型**：`render()` 用模板字符串一次性重建 `#app.innerHTML`，不做局部 diff——简单优先。**所有插入的用户文本必须经 `escapeHtml` 转义**。
+- **渲染模型**：`render()` 一次性重建 `#app.innerHTML`，不做局部 diff——简单优先。所有模板用**自动转义的 `html` 标签模板**拼装：插值默认经 HTML 转义，只有 `html` 自身产出的 SafeHtml（及其数组）原样拼接——「忘了转义」在结构上不可能。
 - **事件模型**：监听器**只在启动时一次性委托绑定**到持久的 `#app`（及 `document`）。`render()` 只替换 `#app` 的子树、`#app` 本身不变，委托对所有动态节点持续有效。单个点击分发器按 `action → 拼音 → 汉字 → 课文 → 课本 → 页面 → 空白/画布` 的优先级路由。
 - **数据流**：交互 → 改 `state` → `saveState()` → `render()`。即改即存。
 
@@ -207,7 +207,7 @@ state.books[]                 课本
           ├ tokens[]          由 mainText 派生的汉字 token（index、拼音、颜色、局部索引、隐藏名单…）
           ├ mainTextScale     字号（0.7–1.9，1 为默认）
           ├ textOnly          是否全文页
-          └ images[]          页面配图
+          └ images[]          页面配图（只存 blobId 引用，字节在 Blob 仓）
 state.activeBookId / activeDeckId / activePageId   当前打开的课本 / 课文 / 页面
 state.ui{…}                   纯瞬时界面状态（不持久化：导航展开、右键菜单、查字/备份/导入向导等）
 ```
@@ -219,6 +219,7 @@ state.ui{…}                   纯瞬时界面状态（不持久化：导航展
 `saveState()` 写入 payload `{ version:2, books, activeBookId, activeDeckId, activePageId }`：
 
 - **主存 IndexedDB**：库 `yuwen` / 仓库 `kv` / 键 `state`，容量足以容纳内联图片。
+- **图片 Blob 仓**：`images` 对象仓（DB v2）存原生 Blob，state 里只有 `blobId` 引用；启动时预载被引用的 Blob 为 objectURL（渲染同步取用），并按引用集回收孤儿。payload 因此不含图片字节：保存变小几个量级、无 base64 膨胀、innerHTML 不再携带兆级字符串。旧数据的内联 `data:` 图片在加载时自动入仓；无 IndexedDB 环境保留内联回退。
 - **localStorage 兜底**：同一 payload **防抖镜像**（400ms 合并连续保存，页面隐藏时冲刷），超过 ~4.5MB 直接跳过、超配额则忽略（均以 IndexedDB 为准）。避免图多的课本每次编辑都付一次全量 `JSON.stringify`。
 - **迁移（无损）**：启动时读到旧版扁平 payload `{ decks, activeDeckId, activePageId }`，自动包成**一本默认课本「我的课本」**，各课文的旧 `lexicon` 合并进课本级；新旧两种形状都能读。
 
@@ -228,7 +229,10 @@ state.ui{…}                   纯瞬时界面状态（不持久化：导航展
 
 - **`core.js` 不碰 DOM**：数据层可独立推理/测试（用 `node` 起 DOM 桩即可跑通启动路径）。新逻辑优先放数据层。
 - **保留 `deck`＝课文命名、只加 `book` 层**：一次只打开一篇课文，所以 `getActiveDeck()` 语义不变＝当前课文，编辑/渲染面几乎零改；churn 集中在导航、查字选择、备份/导入。省下一次全局重命名。
-- **正文唯一真源 + token 派生**：避免「编辑正文后派生数据不同步」的一整类 bug。
+- **正文唯一真源 + token 派生**：避免「编辑正文后派生数据不同步」的一整类 bug。重分词时新旧 token 用 **LCS 保序对齐**——编辑（尤其在重复字前插入）后，颜色/所选读音/隐藏名单跟着「同一个字」走，不串位（旧的同字贪心匹配会）。
+- **自动转义模板取代人工 `escapeHtml` 约定**：防 XSS 从「靠自觉」变成「结构保证」。
+- **图片进 Blob 仓而非内联 base64**：课本照片是真实主载荷，内联让每次保存/渲染都背着全部图片字节。备份文件仍自包含（导出内联回 `data:`、导入重新入仓），格式不变。
+- **导入排版＝真实 DOM 测量**（`render.measureAutoLayout`）：用真实版式结构离屏渲染正文（含拼音行高），从 1.2 → 0.7 逐档试、取普通页放得下的**最大**字号，放不下判全文页——短课文自动得到大字。测量偏保守（拼音用宽占位）；`storage.autoLayout` 启发式仅作无 DOM 环境兜底。
 - **素材按课本共享**：lexicon 从课文上移到课本。`长|cháng` 与 `长|zhǎng` 是两组；同一课本不同课文里的 `春|chūn` 共享同一组例句/图片；位置级只存指针，删素材与「某处隐藏」互不影响。迁移把旧的各自独立的课文并进一本课本后，它们的同名同音素材开始互通——这是新模型的预期行为。
 - **迁移无损**：旧 `decks[]` → 一本默认课本；只重排归属、不动内容；`ensureBookModel`/`ensureDeckModel` 兜底并把遗留的按课文 lexicon 折叠进课本级。
 - **备份不变式：一个 JSON = 恰好一本课本**。整本备份带该本全部 lexicon；只选部分课文时，只带这些课文的 token 引用到的 lexicon 切片（按「字+读音」抽取）。跨 N 本课本＝N 个文件——根因是「素材按课本走，跨本素材不能塞进同一个封套」。导入：多文件全部新建课本；单文件可选新建 / 插入现有课本（`mergeLexicon` 按键合并、id 去重）；兼容旧 `{decks}` 格式；只保留 `data:image/` 内联图片（杜绝外链/脚本地址）。
@@ -253,7 +257,7 @@ state.ui{…}                   纯瞬时界面状态（不持久化：导航展
 }
 ```
 
-`title` 可选（省略取正文开头几字）；`text` 为正文，段落用 `\n` 分隔。导入时按 `autoLayout` 自动定字号/是否全文页。参考 `示例-导入页面.json`。
+`title` 可选（省略取正文开头几字）；`text` 为正文，段落用 `\n` 分隔。导入时按真实 DOM 测量（`measureAutoLayout`）自动定字号/是否全文页，无 DOM 环境回落启发式。参考 `示例-导入页面.json`。
 
 **备份（`yuwen-backup`）**——一个文件恰好一本课本，供备份/迁移，可重新导入：
 
@@ -286,7 +290,7 @@ npm run check      # node --check 校验所有源码模块 + 字库包装脚本�
 ```
 
 - **守零构建**：能不加依赖就不加；必须加时保证浏览器可直接 `import`、`npm run check` 通过。改完至少跑一次它。
-- **用户文本一律 `escapeHtml`** 后才拼进模板。
+- **模板一律用 `html` 标签模板**（插值默认转义）；确认安全的原始片段才用 `rawHtml`。改动后跑 `npm test`；动到渲染/存储再开 `test/browser.html` 自检。
 - **新数据逻辑进 `core.js`（无 DOM）**；渲染进 `render.js`；交互走 `events.js` 的委托分发（新增 `data-action`）。
 - **改完走 `save → render`**，不要手动改 DOM 绕过重画。
 - **改样式时给 `styles.css` 的引用加版本号**（`index.html` 里 `styles.css?v=N`）以绕开浏览器缓存。
@@ -301,7 +305,7 @@ npm run check      # node --check 校验所有源码模块 + 字库包装脚本�
 - 不支持跨课本移动课文（仅在导入时选目标课本）。
 - 整页朗读停用；多音字朗读受浏览器 TTS 限制。
 - AI 配图仅生成「提示词」，未接入自动搜索/生成。
-- 导入自动排版是启发式估算、非真实测量，个别页可能需手动微调。
+- 导入排版按导入时的窗口实测；之后换更小的屏幕展示时个别页可能需手动调小字号。
 
 **可能的后续**
 
@@ -309,4 +313,3 @@ npm run check      # node --check 校验所有源码模块 + 字库包装脚本�
 - 资源包格式（图片与课文分离），便于分享与版本管理。
 - 更好的语音/朗读（或离线 TTS）。
 - AI 配图/例句的实际接入（在不破坏「纯静态」前提下探索）。
-- 导入排版从启发式走向「渲染后按实际溢出自适应」。

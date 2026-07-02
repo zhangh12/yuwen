@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>yuwen 浏览器自检</title>
+<link rel="stylesheet" href="../styles.css?v=9">
+</head>
+<body>
+<!--
+  浏览器端自检（覆盖 Node 测不到的部分：真实 IndexedDB Blob 仓、objectURL 渲染、
+  自动转义模板的注入面、真实 DOM 测量排版）。
+  用法：npm start 后打开 http://localhost:5173/test/browser.html，看顶部 ALLPASS。
+  注意：会清空本机 yuwen 数据（IndexedDB + localStorage），只在测试环境打开。
+-->
+<pre id="report" style="margin:0;padding:14px;font:15px monospace;white-space:pre-wrap;background:#ffd">RUNNING…</pre>
+<div id="app"></div>
+<script type="module">
+const report = document.getElementById("report");
+const R = [];
+const push = (name, ok) => R.push([name, !!ok]);
+const done = () => {
+  const allPass = R.every((r) => r[1]);
+  report.style.background = allPass ? "#e6ffe6" : "#ffe6e6";
+  report.textContent = (allPass ? "ALLPASS" : "FAIL") + "\n\n" + R.map((r) => (r[1] ? "ok  " : "NO  ") + r[0]).join("\n");
+  // 供无头自动化读取（人工使用时直接看上面的报告即可）
+  localStorage.setItem("__yuwenTestReport", JSON.stringify({ allPass, R }));
+};
+window.addEventListener("error", (e) => { push("未捕获异常: " + e.message, false); done(); });
+
+// --- 清场并种入含注入载荷与内联图片的旧格式数据 ---
+indexedDB.deleteDatabase("yuwen");
+const RED = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAFklEQVR4nGP8z8Dwn4EIwESMolGFlAEAiUsDHZDcNPcAAAAASUVORK5CYII=";
+const EVIL = '<img src=x onerror="window.__pwned=1">';
+localStorage.setItem("yuwen.decks.v1", JSON.stringify({
+  decks: [{
+    id: "d1", title: "课文" + EVIL, updatedAt: 1,
+    settings: { showPinyin: true, showZdictExamples: false },
+    lexicon: { "春|chūn": { examples: [{ id: "e1", text: "例句" + EVIL }], images: [] } },
+    pages: [{
+      id: "P1", title: "春", mainText: "春天" + EVIL, mainTextScale: 1,
+      styles: { mainTextColor: "ink" }, tokens: [],
+      images: [{ id: "img1", src: RED, caption: "红块", widthPercent: 50 }],
+      imageIndex: 0, textOnly: false
+    }]
+  }],
+  activeDeckId: "d1", activePageId: "P1"
+}));
+
+const { state } = await import("../src/core.js");
+const { loadState, importPages, buildBookEnvelope, parseBackupFile, addBackupAsNewBook, imageUrl } = await import("../src/storage.js");
+const { render, measureAutoLayout } = await import("../src/render.js");
+const { installEvents } = await import("../src/events.js");
+window.alert = () => {}; window.confirm = () => true; window.prompt = (m, d) => d;
+
+await loadState();
+installEvents();
+render();
+
+// 1. 注入面：恶意标记按字面渲染、不执行
+push("XSS：载荷未执行", !window.__pwned);
+push("XSS：无注入元素", !document.querySelector('img[src="x"]'));
+push("XSS：正文字面渲染", (document.querySelector(".main-text")?.textContent || "").includes("<img"));
+
+// 2. Blob 仓：迁移 + 渲染 + 导出内联 + 往返
+const img = state.books[0].texts[0].pages[0].images[0];
+push("Blob：迁移 src→blobId", !!img.blobId && !("src" in img));
+const el = document.querySelector(".image-box img");
+push("Blob：<img> 用 blob: 渲染", !!el && el.src.startsWith("blob:"));
+await new Promise((r) => { if (el?.complete) r(); else { el.onload = r; el.onerror = r; } });
+push("Blob：图片真实解码 8x8", el?.naturalWidth === 8);
+const env = await buildBookEnvelope(state.books[0], state.books[0].texts);
+push("Blob：导出内联 data: 且无 blobId", env.book.texts[0].pages[0].images[0].src?.startsWith("data:image/") && !JSON.stringify(env).includes("blobId"));
+const round = await addBackupAsNewBook(await parseBackupFile({ name: "r.json", text: async () => JSON.stringify(env) }));
+push("Blob：备份往返重新入仓", !!round.texts[0].pages[0].images[0].blobId);
+
+// 3. 真实测量排版
+const mShort = measureAutoLayout("山高水长");
+const mLong = measureAutoLayout("很长的正文。".repeat(80));
+push("测量：短句取大字号", mShort && mShort.mainTextScale >= 1.0 && !mShort.textOnly);
+push("测量：超长判全文页", mLong && mLong.textOnly);
+push("测量：离屏节点已清理", document.querySelectorAll(".lesson-page").length === 1);
+
+// 4. 主流程冒烟：查字 / 备份对话框
+render();
+document.querySelector('[data-action="open-charquery"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+push("查字向导可打开", !!state.ui.query?.open);
+document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+push("Esc 关闭向导", !state.ui.query);
+
+done();
+</script>
+</body>
+</html>
