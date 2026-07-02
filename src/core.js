@@ -5,7 +5,7 @@ export const STORAGE_KEY = "yuwen.decks.v1";
 
 // 显示在顶栏 brand 里的版本号，让用户一眼确认打开的是不是最新版。
 // 每次有用户可感知的改动就手动递增。
-export const APP_VERSION = "0.6.0";
+export const APP_VERSION = "0.7.0";
 
 export const COLORS = [
   { key: "ink", label: "黑", value: "#211d1a" },
@@ -74,7 +74,8 @@ export const state = {
     query: null,
     backup: null,
     importChoice: null,
-    inbox: null
+    inbox: null,
+    pageTransfer: null
   }
 };
 
@@ -428,6 +429,46 @@ export function mergeSharedItems(target, source = [], prefix) {
       target.push(copy);
     }
   });
+}
+
+// 把源课文中的一组页面送到目标课文尾部（页面顺序保持源课文中的相对顺序）。
+// mode:"copy" 克隆页面并换新 id（页与 token）；"move" 把原页从源课文移除，
+// 移空时自动补一张空白页（课文始终至少一页；源即目标时只是挪到末尾，不补）。
+// 跨课本时把源课本 lexicon 中被这些页面引用的「字|拼音」条目并入目标课本
+// （素材按课本共享；不从源课本删除——同书其它课文可能还在引用）。
+// 图片只存 blobId 引用，Blob 仓全局共享，跨课本无需搬字节。
+// 返回落到目标课文里的页面数组（copy 时为新克隆的页）。
+export function transferPages({ sourceBook, sourceDeck, pageIds, targetBook, targetDeck, mode }) {
+  const wanted = new Set(pageIds || []);
+  const picked = sourceDeck.pages.filter((page) => wanted.has(page.id));
+  if (!picked.length) return [];
+  let delivered;
+  if (mode === "move") {
+    sourceDeck.pages = sourceDeck.pages.filter((page) => !wanted.has(page.id));
+    delivered = picked;
+  } else {
+    delivered = picked.map((page) => {
+      const copy = deepClone(page);
+      copy.id = id("page");
+      (copy.tokens || []).forEach((token) => { token.id = id("tok"); });
+      return copy;
+    });
+  }
+  targetDeck.pages.push(...delivered);
+  if (!sourceDeck.pages.length) sourceDeck.pages.push(createPage("第 1 页", ""));
+  if (targetBook !== sourceBook) {
+    const keys = new Set();
+    delivered.forEach((page) => (page.tokens || []).forEach((token) => {
+      keys.add(`${token.text}|${(token.pinyin || "").trim()}`);
+    }));
+    const slice = {};
+    Object.entries(sourceBook.lexicon || {}).forEach(([key, entry]) => {
+      if (keys.has(key)) slice[key] = entry;
+    });
+    targetBook.lexicon ||= {};
+    mergeLexicon(targetBook.lexicon, slice);
+  }
+  return delivered;
 }
 
 export function getEntry(book, token) {

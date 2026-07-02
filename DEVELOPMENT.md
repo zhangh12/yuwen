@@ -98,6 +98,7 @@ state.ui{…}                   纯瞬时界面状态（不持久化）
 - **导入排版＝真实 DOM 测量**（`render.measureAutoLayout`）：用真实版式结构离屏渲染（含拼音行高），1.2→0.7 逐档试、取放得下的最大字号，放不下判全文页；`storage.autoLayout` 启发式仅作无 DOM 兜底（排版判定通过 `importPages(file, layoutFn)` 注入）。
 - **收件箱（inbox.json）**：yuwen 由仓库目录的静态服务器提供，技能把识别结果写到仓库根后 yuwen 直接 `fetch` 即可——零后端、零文件选择器。启动与窗口获焦时检查（**不轮询**）；按 `id` 与 localStorage 去重；×/「稍后再说」下次仍提醒，「忽略」记 id 永久不提。
 - **素材按课本共享**：`长|cháng` 与 `长|zhǎng` 是两组；同课本不同课文的 `春|chūn` 共享素材；位置级只存指针，删素材与「某处隐藏」互不影响。
+- **页面的「复制/移动到课文」（`core.transferPages`）**：数据逻辑在 core（无 DOM，可单测）。追加到目标课文尾部、保持源内相对顺序；copy 换页/token 新 id，move 移空源时自动补空白页（源即目标＝挪到末尾，不补）。**跨课本时把源课本 lexicon 中被所选页面引用的「字|拼音」切片 `mergeLexicon` 进目标课本**（复用备份的切片思路），源课本不删（同书其它课文可能还在引用）；图片 blobId 引用全局共享，无需搬字节。交互上操作完**停留在源课文**——该功能服务「长课文切割成多篇」的工作流，跳去目标会打断连续切割。
 - **备份不变式：一个 JSON = 恰好一本课本**：整本带全量 lexicon，部分课文只带引用切片；跨 N 本＝N 个文件（根因：素材按课本走）。导入多文件全建新书；单文件可选新建/插入（`mergeLexicon` 按键合并）；兼容旧 `{decks}` 格式。
 - **查字/打印页面复用同一套逻辑**：`charsInDecks`/`collectMatches` 支持可选 `pageIds`（页面 id 数组，单页或多选的若干页）与 `radicals=null`；「打印页面」＝`scope:"page"` 直接进选字步，多选页面右键批量打印也走这条路。
 - **Word 用 `.docx` 而非 RTF**：RTF 触发 macOS Gatekeeper 警告；`.docx` 由内置极小 ZIP+OOXML 生成器拼装，零依赖，Pages 直接打开。

@@ -101,6 +101,7 @@ export function render() {
       ${renderPageContextMenu()}
       ${renderPinyinMenu()}
       ${renderCharQuery()}
+      ${renderPageTransfer()}
       ${renderBackup()}
       ${renderImportChoice()}
       ${renderInbox()}
@@ -485,6 +486,8 @@ function renderPageContextMenu() {
     return html`
       <div class="context-menu" style="left:${state.ui.pageContext.x}px;top:${state.ui.pageContext.y}px">
         <button class="menu-item" data-action="print-pages">打印选中的 ${selectedIds.length} 个页面</button>
+        <button class="menu-item" data-action="pages-copy-to">复制 ${selectedIds.length} 个页面到课文…</button>
+        <button class="menu-item" data-action="pages-move-to">移动 ${selectedIds.length} 个页面到课文…</button>
         <button class="menu-item" data-action="delete-pages">删除选中的 ${selectedIds.length} 个页面</button>
       </div>
     `;
@@ -493,7 +496,64 @@ function renderPageContextMenu() {
     <div class="context-menu" style="left:${state.ui.pageContext.x}px;top:${state.ui.pageContext.y}px">
       <button class="menu-item" data-action="print-page" data-page-id="${state.ui.pageContext.pageId}">打印页面</button>
       <button class="menu-item" data-action="copy-page" data-page-id="${state.ui.pageContext.pageId}">复制页面</button>
+      <button class="menu-item" data-action="pages-copy-to">复制到课文…</button>
+      <button class="menu-item" data-action="pages-move-to">移动到课文…</button>
       <button class="menu-item" data-action="delete-page" data-page-id="${state.ui.pageContext.pageId}">删除页面</button>
+    </div>
+  `;
+}
+
+// 「复制到课文 / 移动到课文」弹框：课本手风琴（当前课本默认展开），点一篇课文
+// 即把选中的页面送到它尾部；每本课本末尾有「＋ 新建课文…」（名字走 prompt）。
+function renderPageTransfer() {
+  const transfer = state.ui.pageTransfer;
+  if (!transfer?.open) return "";
+  const verb = transfer.mode === "move" ? "移动" : "复制";
+  return html`
+    <div class="cq-overlay">
+      <div class="cq-dialog cq-dialog-narrow">
+        <div class="cq-head">
+          <span>${verb} ${transfer.pageIds.length} 个页面到课文</span>
+          <button class="cq-x" data-action="transfer-close" aria-label="关闭">×</button>
+        </div>
+        <div class="cq-body">
+          <div class="cq-toolbar">
+            <span class="cq-dim">点选目标课文（页面追加到其尾部），或在课本内新建课文${transfer.mode === "move" ? "；移动后页面从本课文消失" : ""}。</span>
+          </div>
+          <div class="cq-list">
+            ${state.books.map((book) => renderTransferBook(book, transfer))}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderTransferBook(book, transfer) {
+  const isOpen = (transfer.expandedBooks || []).includes(book.id);
+  return html`
+    <div class="cq-book">
+      <div class="cq-row cq-book-row">
+        <button class="cq-book-open" data-action="transfer-book-expand" data-book-id="${book.id}">
+          <span class="cq-twisty">${isOpen ? "▾" : "▸"}</span>
+          <span class="cq-row-title">${book.title}</span>
+          <span class="cq-dim">${book.texts.length} 课</span>
+        </button>
+      </div>
+      ${isOpen ? html`<div class="cq-texts">
+        ${book.texts.map((deck) => {
+          const isSource = deck.id === state.activeDeckId && book.id === state.activeBookId;
+          return html`
+            <button class="cq-row cq-text-row" data-action="transfer-to-deck" data-book-id="${book.id}" data-deck-id="${deck.id}">
+              <span class="cq-row-title">${deck.title}${isSource ? html`<span class="cq-dim">（当前课文）</span>` : ""}</span>
+              <span class="cq-dim">${deck.pages.length} 页</span>
+            </button>
+          `;
+        })}
+        <button class="cq-row cq-text-row cq-new-row" data-action="transfer-new-deck" data-book-id="${book.id}">
+          <span class="cq-row-title">＋ 新建课文…</span>
+        </button>
+      </div>` : ""}
     </div>
   `;
 }

@@ -1040,6 +1040,18 @@ input:focus {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/* 「复制/移动到课文」里的「＋ 新建课文…」行：虚线弱化，与既有课文区分 */
+.cq-new-row {
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  color: var(--muted);
+}
+
+.cq-new-row:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
 /* 查字第 1 步：课本 → 课文 两级树 */
 .cq-tree {
   gap: 2px;

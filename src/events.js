@@ -25,6 +25,7 @@ import {
   createBook,
   createDeck,
   createPage,
+  transferPages,
   tokenizePage,
   allTexts,
   deepClone,
@@ -163,6 +164,7 @@ function onAppClick(event) {
     state.ui.backup = null;
     state.ui.importChoice = null;
     state.ui.inbox = null;
+    state.ui.pageTransfer = null;
     render();
     return;
   }
@@ -384,6 +386,12 @@ function handleAction(target, event) {
   if (action === "delete-pages") return deletePages();
   if (action === "print-page") return openPrintPage([target.dataset.pageId || state.ui.pageContext?.pageId || state.activePageId]);
   if (action === "print-pages") return openPrintPage(currentPageSelection());
+  if (action === "pages-copy-to") return openPageTransfer("copy");
+  if (action === "pages-move-to") return openPageTransfer("move");
+  if (action === "transfer-close") { state.ui.pageTransfer = null; return render(); }
+  if (action === "transfer-book-expand") { toggleTransferBook(target.dataset.bookId); return render(); }
+  if (action === "transfer-to-deck") return runPageTransfer(target.dataset.bookId, target.dataset.deckId);
+  if (action === "transfer-new-deck") return runPageTransfer(target.dataset.bookId, null);
   if (action === "prev-deck") return stepDeck(-1);
   if (action === "next-deck") return stepDeck(1);
   if (action === "import-deck") return importBackupsFlow();
@@ -1085,6 +1093,68 @@ function deleteDeck(deckId = state.activeDeckId) {
   render();
 }
 
+// 「复制到课文 / 移动到课文」：把选中的页面（单选或多选）送到任一课本里某篇
+// 已有课文的尾部，或就地新建一篇课文（默认展开当前课本）。移动＝送达后从源
+// 课文删除。设计给「整批照片导成一篇长课文，再在 yuwen 里切割」的工作流：
+// 操作完停留在源课文，方便连续切割，不跳去目标。
+function openPageTransfer(mode) {
+  const pageIds = currentPageSelection();
+  if (!pageIds.length) return;
+  state.ui.pageTransfer = { open: true, mode, pageIds, expandedBooks: [state.activeBookId] };
+  closeFloaters();
+  render();
+}
+
+function toggleTransferBook(bookId) {
+  const transfer = state.ui.pageTransfer;
+  if (!transfer || !bookId) return;
+  transfer.expandedBooks ||= [];
+  const at = transfer.expandedBooks.indexOf(bookId);
+  if (at >= 0) transfer.expandedBooks.splice(at, 1);
+  else transfer.expandedBooks.push(bookId);
+}
+
+// targetDeckId 为空 = 在目标课本里新建课文（弹名字输入，取消则留在弹框里）。
+function runPageTransfer(targetBookId, targetDeckId) {
+  const transfer = state.ui.pageTransfer;
+  const sourceBook = getActiveBook();
+  const sourceDeck = getActiveDeck();
+  const targetBook = findBook(targetBookId);
+  if (!transfer || !sourceBook || !sourceDeck || !targetBook) return;
+
+  let targetDeck;
+  if (targetDeckId) {
+    targetDeck = targetBook.texts.find((deck) => deck.id === targetDeckId);
+    if (!targetDeck) return;
+  } else {
+    const name = window.prompt("新课文名称", `课文 ${targetBook.texts.length + 1}`);
+    if (!name) return;
+    targetDeck = createDeck(name, "");
+    targetDeck.pages = []; // 只装转移来的页面，不要默认空白页
+    targetBook.texts.push(targetDeck);
+  }
+
+  const pageIds = transfer.pageIds.filter((pid) => sourceDeck.pages.some((page) => page.id === pid));
+  const firstIndex = sourceDeck.pages.findIndex((page) => pageIds.includes(page.id));
+  const delivered = transferPages({ sourceBook, sourceDeck, pageIds, targetBook, targetDeck, mode: transfer.mode });
+  if (!delivered.length) { state.ui.pageTransfer = null; return render(); }
+
+  // 移动后当前页可能已不在源课文里：落到被移走区块附近的页上
+  if (!sourceDeck.pages.some((page) => page.id === state.activePageId)) {
+    state.activePageId = sourceDeck.pages[Math.min(Math.max(0, firstIndex), sourceDeck.pages.length - 1)].id;
+  }
+  const isCopy = transfer.mode === "copy";
+  state.ui.pageTransfer = null;
+  sourceDeck.updatedAt = Date.now();
+  targetDeck.updatedAt = Date.now();
+  targetBook.updatedAt = Date.now();
+  clearTransient();
+  saveState();
+  render();
+  // 移动的反馈是页面从列表消失；复制在源课文看不出变化，补一句确认
+  if (isCopy) window.alert(`已复制 ${delivered.length} 个页面到《${targetBook.title} › ${targetDeck.title}》。`);
+}
+
 // 上一课文 / 下一课文：在当前课本内前后切换（到头时按钮已置灰，这里再兜底）。
 function stepDeck(delta) {
   const book = getActiveBook();
@@ -1726,11 +1796,12 @@ async function importIntoBook(bookId) {
 
 function onDocumentKeyDown(event) {
   if (event.key === "Escape") {
-    if (state.ui.query?.open || state.ui.backup?.open || state.ui.importChoice?.open || state.ui.inbox?.open) {
+    if (state.ui.query?.open || state.ui.backup?.open || state.ui.importChoice?.open || state.ui.inbox?.open || state.ui.pageTransfer?.open) {
       state.ui.query = null;
       state.ui.backup = null;
       state.ui.importChoice = null;
       state.ui.inbox = null;
+      state.ui.pageTransfer = null;
       render();
       return;
     }
