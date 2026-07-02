@@ -1046,14 +1046,23 @@ function deleteDeck(deckId = state.activeDeckId) {
   render();
 }
 
+// 重画后把当前页条目滚到可见位置（新增/复制的页可能在视口之外）。
+function scrollActivePageIntoView() {
+  app.querySelector(".page-item.is-active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
 function newPage() {
   const deck = getActiveDeck();
-  const page = createPage(`第 ${deck.pages.length + 1} 页`, "");
-  deck.pages.push(page);
+  // 新页插在当前页后面（而不是整册末尾），并保证在列表中立即可见。
+  const index = deck.pages.findIndex((page) => page.id === state.activePageId);
+  const at = index < 0 ? deck.pages.length : index + 1;
+  const page = createPage(`第 ${at + 1} 页`, "");
+  deck.pages.splice(at, 0, page);
   state.activePageId = page.id;
   clearTransient();
   touchDeck(deck);
   render();
+  scrollActivePageIntoView();
 }
 
 function copyPage(pageId = state.activePageId) {
@@ -1081,6 +1090,7 @@ function copyPage(pageId = state.activePageId) {
   touchDeck(deck);
   saveState();
   render();
+  scrollActivePageIntoView();
 }
 
 function deletePage(pageId = state.activePageId) {
@@ -1578,6 +1588,7 @@ function importPagesFlow() {
       const count = await importPages(file, measureAutoLayout);
       clearTransient();
       render();
+      scrollActivePageIntoView();
       window.alert(`已导入 ${count} 个页面到当前讲义。`);
     } catch (error) {
       window.alert(`导入页面失败：${error.message}`);

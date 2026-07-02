@@ -30,6 +30,54 @@ test("tokenizePage：重分词后保留同字位置的用户数据（颜色/读�
   assert.equal(page.tokens[0].pinyin, "chūn");
 });
 
+test("词组注音：按前后字组词为多音字定音", () => {
+  // 行: [xíng, háng]（FALLBACK）；长: [cháng, zhǎng]；了: [le, liǎo]
+  globalThis.window.zPhrasePinyin = {
+    银行: "yín háng", 行动: "xíng dòng", 长大: "zhǎng dà",
+    了解: "liǎo jiě", 为了: "wèi le"
+  };
+  const py = (text) => {
+    const page = { mainText: text, tokens: [] };
+    tokenizePage(page);
+    return Object.fromEntries(page.tokens.map((t) => [t.text + "@" + t.index, t.pinyin]));
+  };
+
+  assert.equal(py("银行")["行@1"], "háng", "银行 → háng");
+  assert.equal(py("行动")["行@0"], "xíng", "行动 → xíng");
+  assert.equal(py("长大")["长@0"], "zhǎng", "长大 → zhǎng");
+  assert.equal(py("了解")["了@0"], "liǎo", "了解 → liǎo");
+  // 认领规则：「为了」先认领「了」读 le，「了解」抢不走
+  assert.equal(py("为了解决")["了@1"], "le", "为了解决 → 了 读 le");
+  // 词典命中的读音标记为 phrase 来源
+  const page = { mainText: "银行", tokens: [] };
+  tokenizePage(page);
+  assert.equal(page.tokens[1].pinyinSource, "phrase");
+  delete globalThis.window.zPhrasePinyin;
+});
+
+test("词组注音：用户手选读音优先于词组，且重分词后保留", () => {
+  globalThis.window.zPhrasePinyin = { 银行: "yín háng" };
+  const page = { mainText: "银行", tokens: [] };
+  tokenizePage(page);
+  page.tokens[1].pinyin = "xíng";
+  page.tokens[1].pinyinSource = "user";
+  page.mainText = "大银行";
+  tokenizePage(page);
+  const hang = page.tokens.find((t) => t.text === "行");
+  assert.equal(hang.pinyin, "xíng", "用户手选不被词组覆盖");
+  assert.equal(hang.pinyinSource, "user");
+  delete globalThis.window.zPhrasePinyin;
+});
+
+test("词组注音：不相邻（隔标点）不组词", () => {
+  globalThis.window.zPhrasePinyin = { 银行: "yín háng" };
+  const page = { mainText: "银，行", tokens: [] };
+  tokenizePage(page);
+  const hang = page.tokens.find((t) => t.text === "行");
+  assert.notEqual(hang.pinyinSource, "phrase", "隔着标点不算词");
+  delete globalThis.window.zPhrasePinyin;
+});
+
 test("token 对齐：重复字前插入字符，标注不串位（旧贪心算法的失败用例）", () => {
   // "春春"，第二个春标红。旧算法在前面插入"早"后，精确下标匹配会把红色抢给第一个春。
   const page = { mainText: "春春", tokens: [] };

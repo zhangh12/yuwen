@@ -5,7 +5,7 @@ export const STORAGE_KEY = "yuwen.decks.v1";
 
 // 显示在顶栏 brand 里的版本号，让用户一眼确认打开的是不是最新版。
 // 每次有用户可感知的改动就手动递增。
-export const APP_VERSION = "0.3.0";
+export const APP_VERSION = "0.4.0";
 
 export const COLORS = [
   { key: "ink", label: "黑", value: "#211d1a" },
@@ -160,25 +160,66 @@ export function lookupZdictMeanings(char, pinyin) {
 export function lookupPinyin(char) {
   const fromZdict = lookupZdict(char);
   const fallback = FALLBACK_PINYIN[char] || [];
-  const candidates = [...new Set([...fromZdict, ...fallback].map(normalizePinyin).filter(Boolean))];
+  // 候选顺序决定默认读音（无词组可匹配时取第一个）。FALLBACK_PINYIN 是手工
+  // 整理、常用读音在前的表（了→le、都→dōu…），它的顺序优先；zdict 的顺序
+  // 不可靠（常把书面/少用读音排在前面），只用来补充候选。
+  const candidates = [...new Set([...fallback, ...fromZdict].map(normalizePinyin).filter(Boolean))];
   return candidates.length ? candidates : [""];
 }
 
 export function createToken(char, index, previousSame) {
   const candidates = lookupPinyin(char);
+  // 只有用户手选的读音才随 token 延续；其余读音每次重分词都重新推导
+  // （默认读音 + 词组匹配），这样编辑改变了前后邻字时词组判定能跟着更新。
+  const userChosen = previousSame?.pinyinSource === "user";
   return {
     id: previousSame?.id || id("tok"),
     text: char,
     index,
-    pinyin: previousSame?.pinyin || candidates[0] || "",
+    pinyin: (userChosen && previousSame.pinyin) || candidates[0] || "",
     pinyinCandidates: candidates,
-    pinyinSource: previousSame?.pinyinSource || "zdict",
+    pinyinSource: userChosen ? "user" : "zdict",
     color: previousSame?.color || "",
     exampleIndex: previousSame?.exampleIndex || 0,
     imageIndex: previousSame?.imageIndex || 0,
     hiddenExamples: previousSame?.hiddenExamples || [],
     hiddenImages: previousSame?.hiddenImages || []
   };
+}
+
+// 多音字按词定音：对每个非用户手选的多音字，先看「前一个字+它」、再看
+// 「它+后一个字」是否构成词典（vendor/data-phrases.js，二字词）里的词；
+// 命中且该位置读音在候选之内，就采用词典读音。
+// 前词优先充当"认领者"：如「为了解决」，「为了」先认领「了」读 le，
+// 「了解」就不会再把它抢成 liǎo。
+export function applyPhrasePinyin(page) {
+  const dict = (typeof window !== "undefined" && window.zPhrasePinyin) || null;
+  if (!dict) return;
+  const tokens = page.tokens;
+  const span = (token) => [...token.text].length;
+  const adjacent = (a, b) => a && b && a.index + span(a) === b.index;
+
+  for (let k = 0; k < tokens.length; k++) {
+    const token = tokens[k];
+    if (token.pinyinSource === "user" || token.pinyinCandidates.length < 2) continue;
+    const prev = adjacent(tokens[k - 1], token) ? tokens[k - 1] : null;
+    const next = adjacent(token, tokens[k + 1]) ? tokens[k + 1] : null;
+
+    // 返回 true 表示该词"认领"了这个字（即使读音与默认一致，也不再试另一侧）。
+    const claim = (a, b, position) => {
+      const pinyin = dict[a.text + b.text];
+      if (!pinyin) return false;
+      const reading = pinyin.split(" ")[position];
+      if (reading && token.pinyinCandidates.includes(reading)) {
+        token.pinyin = reading;
+        token.pinyinSource = "phrase";
+      }
+      return true;
+    };
+
+    if (prev && claim(prev, token, 1)) continue;
+    if (next) claim(token, next, 0);
+  }
 }
 
 // 用 LCS 把旧 token 序列与新汉字序列做保序对齐。编辑正文（插入/删除/改动）后，
@@ -231,6 +272,7 @@ export function tokenizePage(page) {
   });
   const matched = alignPreviousTokens(previous, chars);
   page.tokens = chars.map(({ char, index }) => createToken(char, index, matched.get(index)));
+  applyPhrasePinyin(page);
 }
 
 export function createPage(title = "新页面", text = "") {
