@@ -1,9 +1,15 @@
 // Persistence layer.
 //
-// State is stored in IndexedDB as the primary store because base64 images can
-// easily exceed the ~5MB localStorage ceiling. localStorage is kept only as a
-// best-effort mirror and as a migration source for decks saved by older builds.
-// JSON import/export lets teachers move handouts between machines.
+// State is stored in IndexedDB as the primary store. Images live in a separate
+// IndexedDB object store as raw Blobs ("images"), and state only carries a
+// blobId reference per image:
+//   - 保存不再随每次编辑重写全部图片字节（state 本身变小几个量级）；
+//   - 渲染不再把几 MB 的 base64 塞进 innerHTML，而是用缓存的 objectURL；
+//   - Blob 免去 base64 的 ~33% 体积膨胀。
+// 备份文件仍是自包含 JSON：导出时把 Blob 内联回 data: URL，导入时再收进 Blob 仓，
+// 因此 yuwen-backup 格式不变、旧文件（内联 data: 图片）也照常导入。
+// localStorage is kept only as a best-effort mirror (now tiny, since images are
+// not in the payload) and as a migration source for decks saved by older builds.
 
 import {
   STORAGE_KEY,
@@ -21,8 +27,9 @@ import {
 } from "./core.js";
 
 const DB_NAME = "yuwen";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "kv";
+const IMAGE_STORE = "images";
 const STATE_KEY = "state";
 
 let dbPromise = null;
@@ -30,7 +37,7 @@ let dbPromise = null;
 function openDb() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
-    if (!("indexedDB" in window)) {
+    if (!("indexedDB" in globalThis) || !globalThis.indexedDB) {
       reject(new Error("IndexedDB unavailable"));
       return;
     }
@@ -38,6 +45,7 @@ function openDb() {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      if (!db.objectStoreNames.contains(IMAGE_STORE)) db.createObjectStore(IMAGE_STORE);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -45,23 +53,115 @@ function openDb() {
   return dbPromise;
 }
 
-function idbGet(key) {
+function idbRequest(storeName, mode, run) {
   return openDb().then((db) => new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readonly");
-    const request = tx.objectStore(STORE).get(key);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    const tx = db.transaction(storeName, mode);
+    const request = run(tx.objectStore(storeName));
+    if (request) {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    } else {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    }
   }));
 }
 
-function idbSet(key, value) {
-  return openDb().then((db) => new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).put(value, key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  }));
+const idbGet = (key) => idbRequest(STORE, "readonly", (store) => store.get(key));
+const idbSet = (key, value) => idbRequest(STORE, "readwrite", (store) => { store.put(value, key); });
+const idbImageGet = (key) => idbRequest(IMAGE_STORE, "readonly", (store) => store.get(key));
+const idbImagePut = (key, blob) => idbRequest(IMAGE_STORE, "readwrite", (store) => { store.put(blob, key); });
+const idbImageDelete = (key) => idbRequest(IMAGE_STORE, "readwrite", (store) => { store.delete(key); });
+const idbImageKeys = () => idbRequest(IMAGE_STORE, "readonly", (store) => store.getAllKeys());
+
+// --- 图片 Blob 仓 ------------------------------------------------------------
+
+// blobId -> { blob, url }。加载时预载全部被引用的 Blob，渲染同步取 objectURL。
+const blobCache = new Map();
+
+function cacheBlob(blobId, blob) {
+  if (blobCache.has(blobId)) return blobCache.get(blobId);
+  const entry = { blob, url: URL.createObjectURL(blob) };
+  blobCache.set(blobId, entry);
+  return entry;
 }
+
+// 渲染用：图片 → 可放进 <img src> 的地址。优先 Blob 仓；老数据 / 无 IndexedDB
+// 环境回落到内联 data: URL。
+export function imageUrl(image) {
+  if (image?.blobId && blobCache.has(image.blobId)) return blobCache.get(image.blobId).url;
+  return image?.src || "";
+}
+
+// 新图片入仓（file 即 Blob）。返回 blobId。
+export async function storeImageBlob(blob) {
+  const blobId = id("blob");
+  await idbImagePut(blobId, blob);
+  cacheBlob(blobId, blob);
+  return blobId;
+}
+
+async function dataUrlToBlob(dataUrl) {
+  return (await fetch(dataUrl)).blob();
+}
+
+async function blobToDataUrl(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return `data:${blob.type || "image/png"};base64,${btoa(binary)}`;
+}
+
+function forEachImage(bookLike, fn) {
+  bookLike.texts?.forEach((text) => text.pages?.forEach((page) => (page.images || []).forEach(fn)));
+  Object.values(bookLike.lexicon || {}).forEach((entry) => {
+    if (entry && typeof entry === "object") (entry.images || []).forEach(fn);
+  });
+}
+
+// 把 bookLike（state 里的书，或导入封套）中所有内联 data: 图片收进 Blob 仓，
+// 改存 blobId。迁移旧数据与导入备份共用。
+async function internImages(bookLike) {
+  const pending = [];
+  forEachImage(bookLike, (image) => {
+    if (typeof image?.src === "string" && image.src.startsWith("data:")) pending.push(image);
+  });
+  for (const image of pending) {
+    try {
+      image.blobId = await storeImageBlob(await dataUrlToBlob(image.src));
+      delete image.src;
+    } catch {
+      /* 保留内联 src 作为回退（例如无 IndexedDB 环境） */
+    }
+  }
+}
+
+// 预载 state 引用到的全部 Blob 进缓存；引用不到的仓内条目视为孤儿并清除
+// （删除图片/课文/课本不即时删 Blob，统一在这里回收）。
+async function preloadAndSweepBlobs() {
+  const referenced = new Set();
+  state.books.forEach((book) => forEachImage(book, (image) => {
+    if (image?.blobId) referenced.add(image.blobId);
+  }));
+  for (const blobId of referenced) {
+    if (blobCache.has(blobId)) continue;
+    try {
+      const blob = await idbImageGet(blobId);
+      if (blob) cacheBlob(blobId, blob);
+    } catch { /* 渲染时回落为空 src */ }
+  }
+  try {
+    const keys = (await idbImageKeys()) || [];
+    for (const key of keys) {
+      if (!referenced.has(key)) await idbImageDelete(key);
+    }
+  } catch { /* 回收失败无碍正确性 */ }
+}
+
+// --- State load / save -------------------------------------------------------
 
 function buildPayload() {
   return {
@@ -107,8 +207,8 @@ function applyLoadedState(stored) {
 }
 
 // localStorage 镜像只是无 IndexedDB 环境下小数据的兜底，不必每次保存都同步
-// 全量 JSON.stringify（图多的课本一次就是几 MB、每次编辑都要付）。这里做两件事：
-// 防抖合并连续保存；超过配额必炸的大 payload 直接跳过（IndexedDB 为主存）。
+// 全量 JSON.stringify。这里做两件事：防抖合并连续保存；超过配额必炸的大
+// payload 直接跳过（IndexedDB 为主存）。
 const MIRROR_DEBOUNCE_MS = 400;
 const MIRROR_LIMIT = 4_500_000;
 let mirrorTimer = 0;
@@ -163,6 +263,9 @@ export async function loadState() {
 
   if (hasData(stored)) {
     applyLoadedState(stored);
+    // 老数据的内联 data: 图片收进 Blob 仓；再预载引用 Blob、清孤儿。
+    for (const book of state.books) await internImages(book);
+    await preloadAndSweepBlobs();
     saveState();
     return;
   }
@@ -182,7 +285,7 @@ export function touchDeck(deck = getActiveDeck()) {
   saveState();
 }
 
-// --- Import / export -------------------------------------------------------
+// --- Import ------------------------------------------------------------------
 
 // Normalize a parsed backup file into a { title, lexicon, texts } envelope.
 // Accepts the current yuwen-backup shape and the legacy { decks:[…] } backup
@@ -215,14 +318,16 @@ function isValidTexts(texts) {
 }
 
 // Drop image sources that are not inline data: URLs (both page配图 and lexicon
-// images) so an imported file cannot smuggle in remote or script URLs.
+// images) so an imported file cannot smuggle in remote or script URLs; also
+// strip any incoming blobId — Blob 引用只能由本机分配。
 function sanitizeEnvelope(env) {
-  const safe = (images) => Array.isArray(images)
+  const safe = (images) => (Array.isArray(images)
     ? images.filter((image) => image && typeof image.src === "string" && image.src.startsWith("data:image/"))
-    : [];
+    : []).map((image) => { delete image.blobId; return image; });
   env.texts.forEach((text) => text.pages?.forEach((page) => { page.images = safe(page.images); }));
-  Object.values(env.lexicon || {}).forEach((entry) => {
+  Object.entries(env.lexicon || {}).forEach(([key, entry]) => {
     if (entry && typeof entry === "object") entry.images = safe(entry.images);
+    else delete env.lexicon[key];
   });
   return env;
 }
@@ -244,13 +349,90 @@ function cloneTextsFresh(texts) {
   });
 }
 
-// --- 备份（Backup export）--------------------------------------------------
+// Parse + validate + sanitize a single backup file into an envelope. Throws a
+// user-facing error naming the file when it is not a valid backup.
+export async function parseBackupFile(file) {
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch {
+    throw new Error(`文件「${file.name}」不是有效的 JSON。`);
+  }
+  const env = toEnvelope(parsed);
+  if (!env || !isValidTexts(env.texts)) {
+    throw new Error(`文件「${file.name}」不是有效的 yuwen 备份。`);
+  }
+  return sanitizeEnvelope(env);
+}
+
+function activateBook(book) {
+  state.activeBookId = book.id;
+  state.activeDeckId = book.texts[0].id;
+  state.activePageId = book.texts[0].pages[0].id;
+}
+
+// Import an envelope as a brand-new book (fresh ids, 图片收进 Blob 仓). Switches to it.
+export async function addBackupAsNewBook(env) {
+  const book = {
+    id: id("book"),
+    title: env.title,
+    updatedAt: Date.now(),
+    lexicon: deepClone(env.lexicon || {}),
+    texts: cloneTextsFresh(env.texts)
+  };
+  book.texts.forEach((deck) => deck.pages.forEach(tokenizePage));
+  ensureBookModel(book);
+  await internImages(book);
+  state.books.push(book);
+  activateBook(book);
+  saveState();
+  return book;
+}
+
+// Insert an envelope's 课文 into an existing book, merging its lexicon by 字|拼音.
+export async function addBackupToBook(env, bookId) {
+  const book = state.books.find((item) => item.id === bookId);
+  if (!book) return null;
+  const incoming = {
+    lexicon: deepClone(env.lexicon || {}),
+    texts: cloneTextsFresh(env.texts)
+  };
+  incoming.texts.forEach((deck) => deck.pages.forEach(tokenizePage));
+  await internImages(incoming);
+  book.texts.push(...incoming.texts);
+  book.lexicon ||= {};
+  mergeLexicon(book.lexicon, incoming.lexicon);
+  ensureBookModel(book);
+  book.updatedAt = Date.now();
+  state.activeBookId = book.id;
+  state.activeDeckId = incoming.texts[0].id;
+  state.activePageId = incoming.texts[0].pages[0].id;
+  saveState();
+  return book;
+}
+
+// Import several backup files at once — each becomes a new book. All files are
+// parsed (and validated) before any book is added, so a bad file aborts the
+// whole batch instead of leaving it half-imported. Returns the count.
+export async function importBackups(files) {
+  const envelopes = [];
+  for (const file of files) envelopes.push(await parseBackupFile(file));
+  const books = [];
+  for (const env of envelopes) books.push(await addBackupAsNewBook(env));
+  if (books.length) {
+    activateBook(books[0]);
+    saveState();
+  }
+  return books.length;
+}
+
+// --- 备份（Backup export）-----------------------------------------------------
 //
 // One backup file = exactly one book. A whole-book backup carries the book's
 // full lexicon; a partial (subset of 课文) backup carries only the lexicon
 // entries those 课文 actually reference. Selecting 课文 across N books produces
 // N separate downloads (there is no cross-book lexicon, so they can't share one
-// file).
+// file). 备份文件自包含：Blob 仓中的图片导出时内联回 data: URL。
 
 function downloadJson(obj, filename) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
@@ -282,100 +464,41 @@ function referencedLexicon(book, texts) {
   return lexicon;
 }
 
-function buildBookEnvelope(book, texts) {
+// 导出封套：结构 deepClone 后，把 blobId 引用内联回 data: URL（文件自包含）。
+export async function buildBookEnvelope(book, texts) {
   const wholeBook = texts.length === book.texts.length;
   const lexicon = wholeBook ? (book.lexicon || {}) : referencedLexicon(book, texts);
-  return deepClone({
+  const env = deepClone({
     format: "yuwen-backup",
     version: 2,
     book: { title: book.title, lexicon, texts }
   });
+  const images = [];
+  forEachImage(env.book, (image) => { if (image?.blobId) images.push(image); });
+  for (const image of images) {
+    const entry = blobCache.get(image.blobId) || null;
+    const blob = entry?.blob || await idbImageGet(image.blobId).catch(() => null);
+    if (blob) image.src = await blobToDataUrl(blob);
+    delete image.blobId;
+  }
+  return env;
 }
 
 // Back up the books that own any of the selected 课文, one JSON file each.
 // Returns the number of files produced.
-export function exportBackup(deckIds) {
+export async function exportBackup(deckIds) {
   const wanted = new Set(deckIds);
   let files = 0;
-  state.books.forEach((book) => {
+  for (const book of state.books) {
     const texts = book.texts.filter((deck) => wanted.has(deck.id));
-    if (!texts.length) return;
-    downloadJson(buildBookEnvelope(book, texts), backupFilename(book.title));
+    if (!texts.length) continue;
+    downloadJson(await buildBookEnvelope(book, texts), backupFilename(book.title));
     files += 1;
-  });
+  }
   return files;
 }
 
-// Parse + validate + sanitize a single backup file into an envelope. Throws a
-// user-facing error naming the file when it is not a valid backup.
-export async function parseBackupFile(file) {
-  let parsed;
-  try {
-    parsed = JSON.parse(await file.text());
-  } catch {
-    throw new Error(`文件「${file.name}」不是有效的 JSON。`);
-  }
-  const env = toEnvelope(parsed);
-  if (!env || !isValidTexts(env.texts)) {
-    throw new Error(`文件「${file.name}」不是有效的 yuwen 备份。`);
-  }
-  return sanitizeEnvelope(env);
-}
-
-function activateBook(book) {
-  state.activeBookId = book.id;
-  state.activeDeckId = book.texts[0].id;
-  state.activePageId = book.texts[0].pages[0].id;
-}
-
-// Import an envelope as a brand-new book (fresh ids). Switches to it.
-export function addBackupAsNewBook(env) {
-  const book = {
-    id: id("book"),
-    title: env.title,
-    updatedAt: Date.now(),
-    lexicon: deepClone(env.lexicon || {}),
-    texts: cloneTextsFresh(env.texts)
-  };
-  book.texts.forEach((deck) => deck.pages.forEach(tokenizePage));
-  ensureBookModel(book);
-  state.books.push(book);
-  activateBook(book);
-  saveState();
-  return book;
-}
-
-// Insert an envelope's 课文 into an existing book, merging its lexicon by 字|拼音.
-export function addBackupToBook(env, bookId) {
-  const book = state.books.find((item) => item.id === bookId);
-  if (!book) return null;
-  const texts = cloneTextsFresh(env.texts);
-  texts.forEach((deck) => deck.pages.forEach(tokenizePage));
-  book.texts.push(...texts);
-  book.lexicon ||= {};
-  mergeLexicon(book.lexicon, env.lexicon || {});
-  ensureBookModel(book);
-  book.updatedAt = Date.now();
-  state.activeBookId = book.id;
-  state.activeDeckId = texts[0].id;
-  state.activePageId = texts[0].pages[0].id;
-  saveState();
-  return book;
-}
-
-// Import several backup files at once — each becomes a new book. All files are
-// parsed (and validated) before any book is added, so a bad file aborts the
-// whole batch instead of leaving it half-imported. Returns the count.
-export async function importBackups(files) {
-  const envelopes = [];
-  for (const file of files) envelopes.push(await parseBackupFile(file));
-  const books = envelopes.map((env) => addBackupAsNewBook(env));
-  if (books.length) {
-    activateBook(books[0]);
-    saveState();
-  }
-  return books.length;
-}
+// --- yuwen-pages（页面导入） ---------------------------------------------------
 
 // Import a "yuwen-pages" file: append each page to the CURRENT deck. yuwen
 // re-derives pinyin via createPage. Returns the number of pages added.
@@ -396,10 +519,9 @@ function isPoem(text) {
   return allA || allB;
 }
 
-// 导入时定字号与是否全文页。字号只用两种：0.7（最小）与 0.9。
+// 导入排版的启发式兜底（无 DOM 环境 / 测量失败时用）。字号只用两种：0.7 与 0.9。
 // 全页判定：最小字号(0.7)下普通页主文区放不下 → 全文页。
-// 字号：全页一律最小字号 0.7；留在普通页的诗词用 0.9，其余用 0.7。
-function autoLayout(text) {
+export function autoLayout(text) {
   const paras = String(text).split("\n").map((line) => [...line].length);
   // 普通页主文区：宽约 430px（最小字号下约 16 字/行），高约 390px，行高含拼音
   const fitsNormal = (scale) => {
@@ -413,7 +535,9 @@ function autoLayout(text) {
   return { mainTextScale, textOnly };
 }
 
-export async function importPages(file) {
+// layoutFn 允许调用方注入更好的排版判定（如 render 层的真实 DOM 测量），
+// 默认用上面的启发式。
+export async function importPages(file, layoutFn = autoLayout) {
   const text = await file.text();
   let parsed;
   try {
@@ -432,7 +556,7 @@ export async function importPages(file) {
       || body.trim().replace(/\s+/g, " ").slice(0, 12)
       || "新页面";
     const made = createPage(title, body);
-    const layout = autoLayout(body);
+    const layout = layoutFn(body) || autoLayout(body);
     made.mainTextScale = layout.mainTextScale;
     made.textOnly = layout.textOnly;
     return made;
@@ -443,4 +567,3 @@ export async function importPages(file) {
   saveState();
   return created.length;
 }
-

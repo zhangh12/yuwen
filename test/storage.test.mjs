@@ -2,21 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { installBrowserStubs, fakeFile, makeText, makePage } from "./helpers.mjs";
 
-const { local } = installBrowserStubs();
+const { local, stores } = installBrowserStubs();
 const { state } = await import("../src/core.js");
 const storage = await import("../src/storage.js");
-const { loadState, parseBackupFile, addBackupAsNewBook, addBackupToBook, importPages } = storage;
+const { loadState, parseBackupFile, addBackupAsNewBook, addBackupToBook, importPages, buildBookEnvelope, imageUrl } = storage;
+
+const PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgo="; // 极小 PNG 头即可
 
 function legacyDeck(id, title, text, lexicon = {}) {
   return { ...makeText(id, title, text), lexicon };
 }
 
-test("迁移：旧 decks[] 无损包成一本默认书，按课文 lexicon 折叠进书级", async () => {
+test("迁移：旧 decks[] 无损包成一本默认书，lexicon 折叠、内联图片收进 Blob 仓", async () => {
+  const deckWithImage = legacyDeck("d1", "课文一", "春天", {
+    "春|chūn": { examples: [{ id: "e1", text: "春天来了" }], images: [{ id: "li", src: PNG_DATA_URL }] }
+  });
+  deckWithImage.pages[0].images = [{ id: "pi", src: PNG_DATA_URL, caption: "", widthPercent: 86 }];
   local.set("yuwen.decks.v1", JSON.stringify({
-    decks: [
-      legacyDeck("d1", "课文一", "春天", { "春|chūn": { examples: [{ id: "e1", text: "春天来了" }], images: [] } }),
-      legacyDeck("d2", "课文二", "春夏", {})
-    ],
+    decks: [deckWithImage, legacyDeck("d2", "课文二", "春夏", {})],
     activeDeckId: "d1",
     activePageId: "p_d1"
   }));
@@ -29,8 +32,43 @@ test("迁移：旧 decks[] 无损包成一本默认书，按课文 lexicon 折�
   assert.equal(state.activePageId, "p_d1");
   assert.equal(book.lexicon["春|chūn"].examples[0].text, "春天来了");
   assert.ok(book.texts.every((t) => !("lexicon" in t)), "课文上的旧 lexicon 已删除");
-  // token 已派生
   assert.equal(book.texts[0].pages[0].tokens.length, 2);
+
+  // 图片迁移：src → blobId，Blob 落进 images 仓，imageUrl 可解析
+  const pageImage = book.texts[0].pages[0].images[0];
+  const lexImage = book.lexicon["春|chūn"].images[0];
+  for (const image of [pageImage, lexImage]) {
+    assert.ok(image.blobId, "分配了 blobId");
+    assert.ok(!("src" in image), "内联 src 已移除");
+    assert.ok(stores.get("images").has(image.blobId), "Blob 已入仓");
+    assert.match(imageUrl(image), /^blob:/);
+  }
+});
+
+test("备份导出：blobId 内联回 data: URL，文件自包含且不带 blobId", async () => {
+  const book = state.books[0];
+  const env = await buildBookEnvelope(book, book.texts);
+  assert.equal(env.format, "yuwen-backup");
+  const exported = env.book.texts[0].pages[0].images[0];
+  assert.ok(exported.src.startsWith("data:image/png"), "导出内联为 data: URL");
+  assert.ok(!("blobId" in exported), "blobId 不出仓");
+  const lexExported = env.book.lexicon["春|chūn"].images[0];
+  assert.ok(lexExported.src.startsWith("data:image/png"));
+
+  // 完整往返：导出的封套再导入 → 重新收进 Blob 仓
+  const round = await parseBackupFile(fakeFile(env, "round.json"));
+  const newBook = await addBackupAsNewBook(round);
+  const roundImage = newBook.texts[0].pages[0].images[0];
+  assert.ok(roundImage.blobId && !("src" in roundImage), "往返后图片重新入仓");
+});
+
+test("Blob 回收：加载时清除未被引用的孤儿 Blob，被引用的保留", async () => {
+  const images = stores.get("images");
+  images.set("blob_orphan", new Blob(["x"], { type: "image/png" }));
+  const referenced = state.books[0].texts[0].pages[0].images[0].blobId;
+  await loadState(); // 重新加载触发 preload + sweep
+  assert.ok(!images.has("blob_orphan"), "孤儿 Blob 被回收");
+  assert.ok(images.has(referenced), "被引用的 Blob 保留");
 });
 
 test("parseBackupFile：校验、净化外链图片、标题截断", async () => {
@@ -68,14 +106,14 @@ test("addBackupAsNewBook / addBackupToBook：新 id、lexicon 合并、激活切
     format: "yuwen-backup", version: 2,
     book: { title: "新书", lexicon: { "风|fēng": { examples: [{ id: "f", text: "风声" }], images: [] } }, texts: [makeText("tx", "新课文", "风")] }
   }));
-  const book = addBackupAsNewBook(env);
+  const book = await addBackupAsNewBook(env);
   assert.equal(state.books.length, before + 1);
   assert.notEqual(book.texts[0].id, "tx", "导入分配全新 id");
   assert.equal(state.activeBookId, book.id);
 
   const target = state.books[0];
   const n0 = target.texts.length;
-  addBackupToBook(env, target.id);
+  await addBackupToBook(env, target.id);
   assert.equal(target.texts.length, n0 + 1);
   assert.ok(target.lexicon["风|fēng"], "插入时合并 lexicon");
 });

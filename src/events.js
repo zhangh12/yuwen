@@ -32,7 +32,7 @@ import {
   dateStamp
 } from "./core.js";
 import { render, app } from "./render.js";
-import { saveState, touchDeck, exportBackup, importBackups, parseBackupFile, addBackupAsNewBook, addBackupToBook, importPages } from "./storage.js";
+import { saveState, touchDeck, exportBackup, importBackups, parseBackupFile, addBackupAsNewBook, addBackupToBook, importPages, storeImageBlob } from "./storage.js";
 import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, buildDocx, buildPrintHtml } from "./charquery.js";
 import { fetchStrokes, buildZitieHtml } from "./zitie.js";
 
@@ -687,17 +687,19 @@ function openImageFilePicker(context = imageContext()) {
   input.click();
 }
 
-function addImageFileToContext(file, context = imageContext()) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    addImageToContext(context, {
-      id: id("img"),
-      src: reader.result,
-      caption: "",
-      widthPercent: 86
-    });
-  };
-  reader.readAsDataURL(file);
+async function addImageFileToContext(file, context = imageContext()) {
+  try {
+    // 图片进 Blob 仓，state 只存引用（保存不再携带图片字节）。
+    const blobId = await storeImageBlob(file);
+    addImageToContext(context, { id: id("img"), blobId, caption: "", widthPercent: 86 });
+  } catch {
+    // 无 IndexedDB 的罕见环境：回退为内联 data: URL（老行为）。
+    const reader = new FileReader();
+    reader.onload = () => {
+      addImageToContext(context, { id: id("img"), src: reader.result, caption: "", widthPercent: 86 });
+    };
+    reader.readAsDataURL(file);
+  }
 }
 
 function addImageToContext(context, image) {
@@ -1308,12 +1310,12 @@ function toggleBackupBookExpand(bookId) {
   else backup.expandedBooks.push(bookId);
 }
 
-function runBackup() {
+async function runBackup() {
   const deckIds = state.ui.backup?.deckIds || [];
   if (!deckIds.length) return;
-  const files = exportBackup(deckIds);
   state.ui.backup = null;
   render();
+  const files = await exportBackup(deckIds);
   if (!files) window.alert("没有可备份的课文。");
 }
 
@@ -1564,20 +1566,20 @@ function importBackupsFlow() {
   input.click();
 }
 
-function importAsNewBook() {
+async function importAsNewBook() {
   const env = state.ui.importChoice?.env;
   if (!env) return;
-  addBackupAsNewBook(env);
+  await addBackupAsNewBook(env);
   state.ui.importChoice = null;
   clearTransient();
   expandBook(state.activeBookId);
   render();
 }
 
-function importIntoBook(bookId) {
+async function importIntoBook(bookId) {
   const env = state.ui.importChoice?.env;
   if (!env || !bookId) return;
-  addBackupToBook(env, bookId);
+  await addBackupToBook(env, bookId);
   state.ui.importChoice = null;
   clearTransient();
   expandBook(state.activeBookId);

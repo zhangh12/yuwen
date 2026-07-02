@@ -13,6 +13,12 @@ export function installBrowserStubs() {
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: (t) => clearTimeout(t)
   };
+  // Blob 仓在缓存里为每个 Blob 建 objectURL；Node 没有 createObjectURL，给个桩。
+  let urlSeq = 0;
+  if (!globalThis.URL.createObjectURL) {
+    globalThis.URL.createObjectURL = () => `blob:node/${++urlSeq}`;
+    globalThis.URL.revokeObjectURL = () => {};
+  }
 
   const stores = new Map(); // storeName -> Map(key -> value)
   globalThis.indexedDB = {

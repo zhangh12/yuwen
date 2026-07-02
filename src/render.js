@@ -23,6 +23,7 @@ import {
   allTexts
 } from "./core.js";
 import { radicalsInDecks, charsInDecks, collectMatches, groupByRadical, mergeBySentence, headerLine } from "./charquery.js";
+import { imageUrl } from "./storage.js";
 
 export const app = document.querySelector("#app");
 
@@ -385,7 +386,7 @@ function renderImageZone(page) {
       </div>
       <div class="image-frame">
         <div class="image-box" data-image-box-id="${current.id}" style="width:${current.widthPercent || 86}%">
-          <img src="${current.src}" alt="${current.caption || "讲义图片"}" draggable="false">
+          <img src="${imageUrl(current)}" alt="${current.caption || "讲义图片"}" draggable="false">
           <button class="image-resize-handle" data-resize-image-id="${current.id}" title="拖拽调整图片大小" aria-label="拖拽调整图片大小"></button>
         </div>
       </div>
