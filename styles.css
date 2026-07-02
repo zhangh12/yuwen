@@ -447,8 +447,8 @@ input:focus {
 .lesson-grid {
   height: 100%;
   display: grid;
-  /* 左侧主文区宽度≈最小字号下 16 字一行的右边界（可微调）；右侧图片区取其余 */
-  grid-template-columns: minmax(0, 590px) minmax(260px, 1fr);
+  /* 左右按比例分栏（单一讲义时期的比例，左≈57% / 右≈43%），不随屏宽让图片区无限变大 */
+  grid-template-columns: minmax(0, 1.02fr) minmax(300px, 0.78fr);
   grid-template-rows: minmax(0, 1fr) 178px;
 }
 
