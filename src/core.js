@@ -5,7 +5,7 @@ export const STORAGE_KEY = "yuwen.decks.v1";
 
 // 显示在顶栏 brand 里的版本号，让用户一眼确认打开的是不是最新版。
 // 每次有用户可感知的改动就手动递增。
-export const APP_VERSION = "0.7.1";
+export const APP_VERSION = "0.8.2";
 
 export const COLORS = [
   { key: "ink", label: "黑", value: "#211d1a" },
@@ -24,7 +24,7 @@ export const FALLBACK_PINYIN = {
   少: ["shǎo", "shào"], 都: ["dōu", "dū"], 为: ["wéi", "wèi"], 着: ["zhe", "zháo", "zhuó"], 和: ["hé", "huò", "hú"],
   的: ["de", "dí", "dì"], 得: ["de", "děi"], 还: ["hái", "huán"], 觉: ["jué", "jiào"], 片: ["piān", "piàn"],
   语: ["yǔ"], 文: ["wén"], 学: ["xué"], 习: ["xí"], 字: ["zì"], 词: ["cí"], 句: ["jù"], 读: ["dú"], 书: ["shū"],
-  远: ["yuǎn"], 看: ["kàn", "kān"], 有: ["yǒu", "yòu"], 色: ["sè"], 近: ["jìn"], 听: ["tīng"], 无: ["wú"], 声: ["shēng"],
+  远: ["yuǎn"], 看: ["kàn", "kān"], 有: ["yǒu", "yòu"], 色: ["sè", "shǎi"], 近: ["jìn"], 听: ["tīng"], 无: ["wú"], 声: ["shēng"],
   上: ["shàng"], 下: ["xià"], 左: ["zuǒ"], 右: ["yòu"], 大: ["dà"], 小: ["xiǎo"], 多: ["duō"], 白: ["bái"], 黑: ["hēi"], 红: ["hóng"],
   早: ["zǎo"], 晚: ["wǎn"], 前: ["qián"], 后: ["hòu"], 中: ["zhōng", "zhòng"], 里: ["lǐ"], 外: ["wài"], 东: ["dōng"], 西: ["xī"], 南: ["nán"], 北: ["běi"],
   我: ["wǒ"], 你: ["nǐ"], 他: ["tā"], 她: ["tā"], 它: ["tā"], 们: ["men"], 家: ["jiā"], 爸: ["bà"], 妈: ["mā"], 哥: ["gē"], 姐: ["jiě"], 弟: ["dì"], 妹: ["mèi"],
@@ -192,11 +192,13 @@ export function createToken(char, index, previousSame) {
   };
 }
 
-// 多音字按词定音：对每个非用户手选的多音字，先看「前一个字+它」、再看
-// 「它+后一个字」是否构成词典（vendor/data-phrases.js，二字词）里的词；
-// 命中且该位置读音在候选之内，就采用词典读音。
-// 前词优先充当"认领者"：如「为了解决」，「为了」先认领「了」读 le，
-// 「了解」就不会再把它抢成 liǎo。
+// 多音字按词定音：对每个非用户手选的多音字，把包含它的相邻汉字窗口
+// （四字 → 三字 → 二字，长词优先；同长度下窗口起点尽量靠左＝前词优先）
+// 拿去查词典（vendor/data-phrases.js）；命中且该位置读音在候选之内，就采用
+// 词典读音。命中即"认领"——不再试更短/更靠右的窗口：如「为了解决」，
+// 「为了」先认领「了」读 le，「了解」就不会再把它抢成 liǎo。
+// 长词优先解决二字词覆盖不到的情形：「为什么」的 为→wèi（二字的「为什」
+// 不是词，旧逻辑落空后只能用默认音 wéi）。
 export function applyPhrasePinyin(page) {
   const dict = (typeof window !== "undefined" && window.zPhrasePinyin) || null;
   if (!dict) return;
@@ -207,23 +209,29 @@ export function applyPhrasePinyin(page) {
   for (let k = 0; k < tokens.length; k++) {
     const token = tokens[k];
     if (token.pinyinSource === "user" || token.pinyinCandidates.length < 2) continue;
-    const prev = adjacent(tokens[k - 1], token) ? tokens[k - 1] : null;
-    const next = adjacent(token, tokens[k + 1]) ? tokens[k + 1] : null;
 
-    // 返回 true 表示该词"认领"了这个字（即使读音与默认一致，也不再试另一侧）。
-    const claim = (a, b, position) => {
-      const pinyin = dict[a.text + b.text];
-      if (!pinyin) return false;
-      const reading = pinyin.split(" ")[position];
-      if (reading && token.pinyinCandidates.includes(reading)) {
-        token.pinyin = reading;
-        token.pinyinSource = "phrase";
+    let claimed = false;
+    for (const len of [4, 3, 2]) {
+      // offset = 该字在窗口里的位置，从 len-1 递减 ⇒ 窗口起点从最左开始。
+      for (let offset = len - 1; offset >= 0 && !claimed; offset--) {
+        const start = k - offset;
+        if (start < 0 || start + len > tokens.length) continue;
+        let contiguous = true;
+        for (let i = start; i < start + len - 1 && contiguous; i++) {
+          contiguous = adjacent(tokens[i], tokens[i + 1]);
+        }
+        if (!contiguous) continue;
+        const pinyin = dict[tokens.slice(start, start + len).map((item) => item.text).join("")];
+        if (!pinyin) continue;
+        const reading = pinyin.split(" ")[offset];
+        if (reading && token.pinyinCandidates.includes(reading)) {
+          token.pinyin = reading;
+          token.pinyinSource = "phrase";
+        }
+        claimed = true;
       }
-      return true;
-    };
-
-    if (prev && claim(prev, token, 1)) continue;
-    if (next) claim(token, next, 0);
+      if (claimed) break;
+    }
   }
 }
 

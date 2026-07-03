@@ -5,9 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>yuwen</title>
     <link rel="stylesheet" href="styles.css?v=13" />
-    <script src="vendor/data-chars-local.js" defer></script>
-    <script src="vendor/data-radicals.js" defer></script>
-    <script src="vendor/data-phrases.js" defer></script>
+    <!-- vendor 数据与 styles.css 同一套防缓存约定：文件内容更新时 bump ?v=N，
+         否则浏览器可能继续用缓存的旧词典（代码新、数据旧，注音悄悄出错）。 -->
+    <script src="vendor/data-chars-local.js?v=1" defer></script>
+    <script src="vendor/data-radicals.js?v=1" defer></script>
+    <script src="vendor/data-phrases.js?v=3" defer></script>
     <script type="module" src="src/main.js"></script>
   </head>
   <body>

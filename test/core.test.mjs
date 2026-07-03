@@ -31,10 +31,10 @@ test("tokenizePage：重分词后保留同字位置的用户数据（颜色/读�
 });
 
 test("词组注音：按前后字组词为多音字定音", () => {
-  // 行: [xíng, háng]（FALLBACK）；长: [cháng, zhǎng]；了: [le, liǎo]
+  // 行: [xíng, háng]（FALLBACK）；长: [cháng, zhǎng]；了: [le, liǎo]；色: [sè, shǎi]
   globalThis.window.zPhrasePinyin = {
     银行: "yín háng", 行动: "xíng dòng", 长大: "zhǎng dà",
-    了解: "liǎo jiě", 为了: "wèi le"
+    了解: "liǎo jiě", 为了: "wèi le", 色子: "shǎi zǐ"
   };
   const py = (text) => {
     const page = { mainText: text, tokens: [] };
@@ -46,12 +46,37 @@ test("词组注音：按前后字组词为多音字定音", () => {
   assert.equal(py("行动")["行@0"], "xíng", "行动 → xíng");
   assert.equal(py("长大")["长@0"], "zhǎng", "长大 → zhǎng");
   assert.equal(py("了解")["了@0"], "liǎo", "了解 → liǎo");
+  assert.equal(py("掷色子")["色@1"], "shǎi", "色子 → shǎi（色 的口语读音在候选内）");
   // 认领规则：「为了」先认领「了」读 le，「了解」抢不走
   assert.equal(py("为了解决")["了@1"], "le", "为了解决 → 了 读 le");
   // 词典命中的读音标记为 phrase 来源
   const page = { mainText: "银行", tokens: [] };
   tokenizePage(page);
   assert.equal(page.tokens[1].pinyinSource, "phrase");
+  delete globalThis.window.zPhrasePinyin;
+});
+
+test("词组注音：三/四字词按最长优先匹配", () => {
+  // 为: [wéi, wèi]（默认 wéi）；给: [gěi, jǐ]（默认 gěi）
+  globalThis.window.zPhrasePinyin = {
+    为了: "wèi le", 什么: "shén me",
+    为什么: "wèi shén me", 自给自足: "zì jǐ zì zú"
+  };
+  const py = (text) => {
+    const page = { mainText: text, tokens: [] };
+    tokenizePage(page);
+    return Object.fromEntries(page.tokens.map((t) => [t.text + "@" + t.index, t.pinyin]));
+  };
+
+  // 旧二字逻辑的落空场景：「为什」不是词，为 会退回默认 wéi；三字词修正为 wèi
+  assert.equal(py("为什么不去")["为@0"], "wèi", "为什么 → 为 读 wèi");
+  // 词中间/末尾位置也能命中同一个长词
+  assert.equal(py("这是为什么")["为@2"], "wèi", "句中的 为什么 同样命中");
+  // 四字成语：给 → jǐ（非默认读音）
+  assert.equal(py("他们自给自足地生活")["给@3"], "jǐ", "自给自足 → 给 读 jǐ");
+  // 长词优先于二字词：为什么 里的 为 不被「为了」之类的二字规则影响，
+  // 且二字词在长词不命中时照常工作
+  assert.equal(py("为了你好")["为@0"], "wèi", "二字词仍正常");
   delete globalThis.window.zPhrasePinyin;
 });
 

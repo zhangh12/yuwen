@@ -91,7 +91,7 @@ state.ui{…}                   纯瞬时界面状态（不持久化）
 新功能容易无意破坏这些取舍，特此记录「为什么」：
 
 - **`core.js` 不碰 DOM**：数据层可在 Node 里直接测（`test/helpers.mjs` 起浏览器桩）。新数据逻辑优先放这里。
-- **多音字按词定音（`applyPhrasePinyin`）**：对非手选多音字，先试「前字+它」再试「它+后字」是否在二字词典里；命中即「认领」——即使读音与默认一致也不再试另一侧（「为了」认领「了」读 le，「了解」抢不走）。默认读音顺序以手工表 `FALLBACK_PINYIN`（常用在前）优先，zdict 只补充候选。词典由 `scripts/build-phrase-pinyin.mjs` 从 mozillazg/phrase-pinyin-data 过滤生成（只留含多音字的二字词）。
+- **多音字按词定音（`applyPhrasePinyin`）**：对非手选多音字，把包含它的相邻汉字窗口按「四字→三字→二字、同长度窗口起点靠左优先」查词典；命中即「认领」——即使读音与默认一致也不再试更短/更右的窗口（「为了」认领「了」读 le，「了解」抢不走）。长词优先补上二字词的盲区：「为什么」的 为→wèi（「为什」不是词，纯二字逻辑会落回默认 wéi）。默认读音顺序以手工表 `FALLBACK_PINYIN`（常用在前）优先，zdict 只补充候选。词典由 `scripts/build-phrase-pinyin.mjs` 从 mozillazg/phrase-pinyin-data 过滤生成：二字词收全部含多音字的词条（含默认读音的当「认领者」），三/四字词只收含非默认读音多音字的词条（全默认的长词不改变输出，收了白占体积）。
 - **LCS token 对齐**：编辑（尤其重复字前插入）后颜色/读音/隐藏名单不串位；极长文本（n·m>1e6）退回逐位对齐。
 - **自动转义模板取代人工 `escapeHtml` 约定**：防 XSS 从「靠自觉」变成「结构保证」。
 - **图片进 Blob 仓而非内联 base64**：课本照片是真实主载荷，内联会让每次保存/渲染背着全部图片字节。备份文件仍自包含（导出内联回 `data:`、导入重新入仓、剥离外来 blobId），格式不变。
@@ -144,7 +144,7 @@ state.ui{…}                   纯瞬时界面状态（不持久化）
 
 - `vendor/data-chars-local.js`：本地字库（`window.zDictChars`，来自 zdict.js）——拼音候选与字库例句；加载失败回退 `core.js` 内置 `FALLBACK_PINYIN`。（原始 `export default` 版存档 `data-chars.js` 与其内容相同、运行时不加载，已删；如需可从 git 历史找回。）
 - `vendor/data-radicals.js`：字→部首（make-me-a-hanzi），离线。
-- `vendor/data-phrases.js`：二字词→拼音（mozillazg/phrase-pinyin-data，MIT），约 393KB；重新生成：
+- `vendor/data-phrases.js`：词→拼音（mozillazg/phrase-pinyin-data，MIT；二字词全收，三/四字词只收含非默认读音的），约 531KB；重新生成：
   ```bash
   curl -sL https://cdn.jsdelivr.net/gh/mozillazg/phrase-pinyin-data@master/pinyin.txt -o /tmp/phrase-pinyin.txt
   node scripts/build-phrase-pinyin.mjs /tmp/phrase-pinyin.txt
@@ -164,7 +164,7 @@ npm test           # 语法检查（node --check 全部模块）+ node:test 单�
 - **模板一律用 `html` 标签模板**（插值默认转义）；确认安全的原始片段才用 `rawHtml`。
 - **新数据逻辑进 `core.js`（无 DOM）**；渲染进 `render.js`；交互走 `events.js` 委托分发（新增 `data-action`）。
 - **改完走 `save → render`**，不要手动改 DOM 绕过重画。
-- **改样式要 bump `styles.css?v=N`**（`index.html` 与 `test/browser.html`）绕开缓存。
+- **改样式要 bump `styles.css?v=N`**（`index.html` 与 `test/browser.html`）绕开缓存；**重新生成 vendor 数据同理**（`index.html` 里对应 `vendor/*.js?v=N`）——否则会出现「代码是新的、数据是旧的」的隐性错误（v0.8.0 词典升级时踩过：新逻辑读着缓存里的旧二字词典，「为什么」依旧标错）。
 - **用户可感知的改动要递增 `core.APP_VERSION`**（顶栏可见，用户以此确认加载了最新代码）。
 - 字帖/查字导出统一走浏览器打印，不落盘文件（备份 JSON 除外）。
 - 改动后跑 `npm test`；动到渲染/存储再开 `test/browser.html` 自检。
@@ -176,7 +176,7 @@ npm test           # 语法检查（node --check 全部模块）+ node:test 单�
 - 数据在单一浏览器的 IndexedDB 中，无账号/云同步（备份 JSON 是唯一的跨机通道）。
 - 不支持跨课本移动课文（仅导入时可选目标课本）。
 - 多音字朗读受浏览器 TTS 限制（无法可靠指定读音）；音质取决于系统安装的语音。
-- 按词定音基于二字词，助词组合（如「背着」）不在词典内时可能用默认读音。
+- 按词定音基于二～四字词的最长匹配，词典外的组合（如部分助词搭配「背着」）仍用默认读音。
 - 导入排版按导入时的窗口实测；换更小屏幕展示时个别页可能需手动调小字号。
 - AI 配图仅生成「提示词」，未接入自动生成。
 
